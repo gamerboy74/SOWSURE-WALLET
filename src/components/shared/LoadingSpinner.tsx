@@ -5,14 +5,16 @@ interface LoadingSpinnerProps {
   fullScreen?: boolean;
   text?: string;
   minDuration?: number;
-  immediate?: boolean; // Add this prop for immediate loading without delay
+  immediate?: boolean;
+  className?: string; // Add className prop
 }
 
 function LoadingSpinner({
   fullScreen = false,
   text = "Loading...",
   minDuration = 0,
-  immediate = false, // For cases where we want to show loader right away
+  immediate = false,
+  className = "", // Default to empty string
 }: LoadingSpinnerProps) {
   const [shouldShow, setShouldShow] = useState(immediate || minDuration === 0);
 
@@ -31,7 +33,7 @@ function LoadingSpinner({
     : "";
 
   return (
-    <div className={`${baseClasses} ${fullScreenClasses}`}>
+    <div className={`${baseClasses} ${fullScreenClasses} ${className}`}>
       <div className="text-center">
         <Loader2 className="h-8 w-8 animate-spin text-emerald-600 mx-auto" />
         <p className="mt-2 text-sm text-gray-600">{text}</p>

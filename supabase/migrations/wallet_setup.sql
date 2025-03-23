@@ -270,3 +270,18 @@ FROM
 
 -- Grant access to the view
 GRANT SELECT ON wallet_funding_request_details TO anon, authenticated;
+
+
+
+ALTER TABLE buyers
+  ADD COLUMN IF NOT EXISTS wallet_id UUID REFERENCES wallets(id) ON DELETE SET NULL;
+
+-- Update existing buyers to link with their wallets
+UPDATE buyers b
+SET wallet_id = w.id
+FROM wallets w
+WHERE b.user_id = w.user_id;
+
+-- Optional: Add a unique constraint to ensure one wallet per buyer
+ALTER TABLE buyers
+  ADD CONSTRAINT unique_wallet_per_buyer UNIQUE (wallet_id);

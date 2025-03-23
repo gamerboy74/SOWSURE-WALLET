@@ -38,6 +38,7 @@ export interface Buyer {
   terms_accepted: boolean;
   created_at: string;
   updated_at: string;
+  
 }
 
 export interface AuthState {
