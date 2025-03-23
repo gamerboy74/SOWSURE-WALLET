@@ -1,4 +1,3 @@
-// Messages.tsx
 import React, { useState, useEffect } from 'react';
 import { Search, User } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -68,13 +67,11 @@ function Messages() {
     try {
       setLoading(true);
 
-      // Query the farmers table to check if the user is a farmer
       const { data: farmerData, error: farmerError } = await supabase
         .from('farmers')
         .select('id')
         .eq('user_id', userId);
 
-      // Query the buyers table to check if the user is a buyer
       const { data: buyerData, error: buyerError } = await supabase
         .from('buyers')
         .select('id')
@@ -332,6 +329,10 @@ function Messages() {
             }}
             productId={chats.find((chat) => chat.id === selectedChat)?.productId}
             onClose={() => setSelectedChat(null)}
+            isFullHeight={true}
+            roundedCorners="right"
+            className="overflow-hidden"
+            autoScrollToBottom={false} // Disable auto-scroll in Messages
           />
         ) : (
           <div className="h-full flex items-center justify-center bg-gradient-to-br from-emerald-50 to-gray-100">

@@ -16,7 +16,7 @@ const ProtectedRoute = ({ userTypeRequired, element, redirectTo }: ProtectedRout
   return isAuthenticated && (!userTypeRequired || userType === userTypeRequired) ? (
     element
   ) : (
-    <Navigate to={redirectTo} replace />
+    <Navigate to="/farmer/login" />
   );
 };
 
