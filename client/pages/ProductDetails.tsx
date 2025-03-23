@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Package,
@@ -45,7 +45,7 @@ interface ProductDetails {
     phone: string;
     email: string;
     wallet_address: string;
-    user_id?: string; // Optional, depending on your schema
+    user_id?: string;
   } | null;
   buyer?: {
     id: string;
@@ -54,7 +54,7 @@ interface ProductDetails {
     business_address: string;
     business_type: string;
     storage_capacity: number;
-    user_id?: string; // Optional, depending on your schema
+    user_id?: string;
   } | null;
 }
 
@@ -78,168 +78,163 @@ const customStyles = `
   .button-transition:hover::after {
     transform: translateX(0);
   }
-
   @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
   }
-
-  .animate-fade-in {
-    animation: fadeIn 0.5s ease-out forwards;
-  }
-
-  .backdrop-blur-sm {
-    backdrop-filter: blur(8px);
-  }
-
-  .list-item-hover {
-    transition: color 0.3s ease;
-  }
-  .list-item-hover:hover {
-    color: #059669; /* Matches emerald-600 */
-  }
+  .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+  .backdrop-blur-sm { backdrop-filter: blur(8px); }
+  .list-item-hover { transition: color 0.3s ease; }
+  .list-item-hover:hover { color: #059669; }
 `;
+
+const ROUTES = {
+  MARKETPLACE: "/marketplace",
+} as const;
+
+const TABLES = {
+  PRODUCTS: "products",
+  FARMERS: "farmers",
+  BUYERS: "buyers",
+  CHATS: "chats",
+} as const;
+
+// Custom hook for fetching product and user role
+const useProductDetails = (productId: string) => {
+  const [product, setProduct] = useState<ProductDetails | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isOwnListing, setIsOwnListing] = useState(false);
+  const [isFarmer, setIsFarmer] = useState(false);
+  const [isBuyer, setIsBuyer] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+      if (authError) throw new Error("Authentication failed");
+      if (user) {
+        setCurrentUserId(user.id);
+
+        const [farmerRes, buyerRes, productRes] = await Promise.all([
+          supabase.from(TABLES.FARMERS).select("id").eq("user_id", user.id).single(),
+          supabase.from(TABLES.BUYERS).select("id").eq("user_id", user.id).single(),
+          supabase
+            .from(TABLES.PRODUCTS)
+            .select("*, farmer:farmer_id (*), buyer:buyer_id (*)")
+            .eq("id", productId)
+            .single(),
+        ]);
+
+        setIsFarmer(!!farmerRes.data && !farmerRes.error);
+        setIsBuyer(!!buyerRes.data && !buyerRes.error);
+
+        if (productRes.error) throw productRes.error;
+        if (!productRes.data) throw new Error("Product not found");
+
+        setProduct(productRes.data);
+        setIsOwnListing(
+          (productRes.data.type === "sell" && productRes.data.farmer?.user_id === user.id) ||
+          (productRes.data.type === "buy" && productRes.data.buyer?.user_id === user.id)
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred");
+    } finally {
+      setLoading(false);
+    }
+  }, [productId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  return { product, loading, error, currentUserId, isOwnListing, isFarmer, isBuyer, refetch: fetchData };
+};
 
 function ProductDetails() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [product, setProduct] = useState<ProductDetails | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    product,
+    loading,
+    error,
+    currentUserId,
+    isOwnListing,
+    isFarmer,
+    isBuyer,
+    refetch,
+  } = useProductDetails(id!);
   const [showChat, setShowChat] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
   const [productImgError, setProductImgError] = useState(false);
   const [profileImgError, setProfileImgError] = useState(false);
-  const [isOwnListing, setIsOwnListing] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
 
-  const fetchProduct = async () => {
+  const disableButtons = useMemo(
+    () =>
+      isOwnListing ||
+      (product?.type === "sell" && isFarmer) ||
+      (product?.type === "buy" && isBuyer),
+    [isOwnListing, product?.type, isFarmer, isBuyer]
+  );
+
+  const initiateChat = useCallback(async () => {
+    if (!currentUserId || !product || disableButtons) return;
+
+    setChatLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        setCurrentUserId(user.id);
-      }
-
-      const { data, error: fetchError } = await supabase
-        .from("products")
-        .select(
-          `
-          *,
-          farmer:farmer_id (*),
-          buyer:buyer_id (*)
-        `
-        )
-        .eq("id", id)
-        .single();
-
-      if (fetchError) {
-        console.error("Fetch error:", fetchError); // Log the error for debugging
-        throw fetchError;
-      }
-      if (!data) throw new Error("Product not found");
-
-      setProduct(data);
-
-      // Check if this is the user's own listing (assuming user_id exists)
-      if (user) {
-        const isOwnSell = data.type === "sell" && data.farmer?.user_id === user.id;
-        const isOwnBuy = data.type === "buy" && data.buyer?.user_id === user.id;
-        setIsOwnListing(isOwnSell || isOwnBuy);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load product");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const initiateChat = async () => {
-    if (!currentUserId || !product || isOwnListing) {
-      return;
-    }
-
-    try {
-      const { data: farmer, error: farmerError } = await supabase
-        .from("farmers")
-        .select("id")
-        .eq("user_id", currentUserId)
-        .single();
-
-      if (farmerError && farmerError.code !== "PGRST116") {
-        throw new Error(`Failed to fetch farmer: ${farmerError.message}`);
-      }
-
-      const { data: buyer, error: buyerError } = await supabase
-        .from("buyers")
-        .select("id")
-        .eq("user_id", currentUserId)
-        .single();
-
-      if (buyerError && buyerError.code !== "PGRST116") {
-        throw new Error(`Failed to fetch buyer: ${buyerError.message}`);
-      }
+      const [farmerRes, buyerRes] = await Promise.all([
+        supabase.from(TABLES.FARMERS).select("id").eq("user_id", currentUserId).single(),
+        supabase.from(TABLES.BUYERS).select("id").eq("user_id", currentUserId).single(),
+      ]);
 
       const chatData = {
-        farmer_id: product.type === "sell" ? product.farmer?.id ?? null : farmer?.id ?? null,
-        buyer_id: product.type === "buy" ? product.buyer?.id ?? null : buyer?.id ?? null,
+        farmer_id: product.type === "sell" ? product.farmer?.id ?? null : farmerRes.data?.id ?? null,
+        buyer_id: product.type === "buy" ? product.buyer?.id ?? null : buyerRes.data?.id ?? null,
         product_id: id,
       };
 
       const { data: existingChats, error: existingChatError } = await supabase
-        .from("chats")
+        .from(TABLES.CHATS)
         .select("id")
         .eq("product_id", id)
         .eq("farmer_id", chatData.farmer_id)
         .eq("buyer_id", chatData.buyer_id)
         .limit(1);
 
-      if (existingChats && existingChats.length > 0) {
-        const existingChat = existingChats[0];
-        setChatId(existingChat.id);
+      if (existingChatError) throw new Error(`Chat check failed: ${existingChatError.message}`);
+
+      if (existingChats?.length > 0) {
+        setChatId(existingChats[0].id);
         setShowChat(true);
         return;
       }
 
-      if (existingChatError) {
-        throw new Error(`Failed to check existing chat: ${existingChatError.message}`);
-      }
-
       const { data: newChat, error: chatError } = await supabase
-        .from("chats")
+        .from(TABLES.CHATS)
         .insert(chatData)
-        .select("id, farmer_id, buyer_id, product_id")
+        .select("id")
         .single();
 
-      if (chatError) {
-        throw new Error(`Failed to create chat: ${chatError.message}`);
-      }
-
+      if (chatError) throw new Error(`Chat creation failed: ${chatError.message}`);
       setChatId(newChat?.id);
       setShowChat(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to initiate chat. Please try again.");
+      console.error(err);
+    } finally {
+      setChatLoading(false);
     }
-  };
+  }, [currentUserId, product, disableButtons, id]);
 
-  useEffect(() => {
-    fetchProduct();
-  }, [id]);
-
-  const handleProductImageError = () => {
-    setProductImgError(true);
-  };
-
-  const handleProfileImageError = () => {
-    setProfileImgError(true);
-  };
+  const handleImageError = useCallback((type: "product" | "profile") => {
+    if (type === "product") setProductImgError(true);
+    else setProfileImgError(true);
+  }, []);
 
   if (loading) {
     return (
@@ -268,18 +263,14 @@ function ProductDetails() {
           <p className="text-gray-600 mb-4">{error || "Product not found"}</p>
           <div className="space-x-4">
             <button
-              onClick={() => {
-                setError(null);
-                setLoading(true);
-                fetchProduct();
-              }}
-              className="button-transition px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors duration-300"
+              onClick={refetch}
+              className="button-transition px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
             >
               Retry
             </button>
             <button
-              onClick={() => navigate("/marketplace")}
-              className="button-transition px-4 py-2 text-emerald-600 hover:text-emerald-700 transition-colors duration-300"
+              onClick={() => navigate(ROUTES.MARKETPLACE)}
+              className="button-transition px-4 py-2 text-emerald-600 hover:text-emerald-700"
             >
               Return to Marketplace
             </button>
@@ -300,20 +291,16 @@ function ProductDetails() {
       <style>{customStyles}</style>
       <div className="container mx-auto px-4 py-6 max-w-7xl animate-fade-in">
         <button
-          onClick={() => navigate("/marketplace")}
-          className="button-transition inline-flex items-center mb-6 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 
-            bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow transition-all duration-200 
-            transform hover:scale-[1.02]"
+          onClick={() => navigate(ROUTES.MARKETPLACE)}
+          className="button-transition inline-flex items-center mb-6 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow transition-all duration-200 transform hover:scale-[1.02]"
+          aria-label="Back to Marketplace"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Marketplace
         </button>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div
-            className="lg:col-span-1 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
-              transition-all duration-300 transform hover:scale-[1.01] overflow-hidden"
-          >
+          <div className="lg:col-span-1 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01] overflow-hidden">
             <div className="aspect-square relative">
               {productImgError || !product.image_url ? (
                 <div className="w-full h-full flex items-center justify-center bg-gray-100">
@@ -325,14 +312,12 @@ function ProductDetails() {
                   alt={product.name}
                   className="w-full h-full object-cover"
                   loading="lazy"
-                  onError={handleProductImageError}
+                  onError={() => handleImageError("product")}
                 />
               )}
               <div
                 className={`absolute top-4 left-4 px-3 py-1 rounded-full text-sm font-medium ${
-                  product.type === "sell"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-blue-100 text-blue-700"
+                  product.type === "sell" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
                 }`}
               >
                 {product.type === "sell" ? "Selling" : "Buying"}
@@ -342,10 +327,8 @@ function ProductDetails() {
             <div className="p-4">
               <div className="flex items-center space-x-4 mb-6">
                 <button
-                  onClick={() => {
-                    /* Handle profile click */
-                  }}
                   className="h-16 w-16 rounded-full bg-gray-100 overflow-hidden ring-2 ring-emerald-500 ring-offset-2 transition-transform hover:scale-105"
+                  aria-label={`View profile of ${sellerName}`}
                 >
                   {profileImgError || !seller?.profile_photo_url ? (
                     <div className="w-full h-full flex items-center justify-center">
@@ -357,7 +340,7 @@ function ProductDetails() {
                       alt={sellerName}
                       className="w-full h-full object-cover"
                       loading="lazy"
-                      onError={handleProfileImageError}
+                      onError={() => handleImageError("profile")}
                     />
                   )}
                 </button>
@@ -374,23 +357,15 @@ function ProductDetails() {
                 <div className="border-t border-gray-100 pt-4 space-y-3">
                   <div className="space-y-1">
                     <p className="text-sm text-gray-500">Address</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {product.farmer.complete_address || "Not specified"}
-                    </p>
+                    <p className="text-sm font-medium text-gray-900">{product.farmer.complete_address || "Not specified"}</p>
                   </div>
-
                   <div className="space-y-1">
                     <p className="text-sm text-gray-500">Land Type</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {product.farmer.land_type || "Not specified"}
-                    </p>
+                    <p className="text-sm font-medium text-gray-900">{product.farmer.land_type || "Not specified"}</p>
                   </div>
-
                   <div className="space-y-1">
                     <p className="text-sm text-gray-500">Land Size</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {product.farmer.land_size ? `${product.farmer.land_size} acres` : "Not specified"}
-                    </p>
+                    <p className="text-sm font-medium text-gray-900">{product.farmer.land_size ? `${product.farmer.land_size} acres` : "Not specified"}</p>
                   </div>
                 </div>
               ) : (
@@ -398,23 +373,15 @@ function ProductDetails() {
                   <div className="border-t border-gray-100 pt-4 space-y-3">
                     <div className="space-y-1">
                       <p className="text-sm text-gray-500">Business Address</p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {product.buyer.business_address || "Not specified"}
-                      </p>
+                      <p className="text-sm font-medium text-gray-900">{product.buyer.business_address || "Not specified"}</p>
                     </div>
-
                     <div className="space-y-1">
                       <p className="text-sm text-gray-500">Business Type</p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {product.buyer.business_type || "Not specified"}
-                      </p>
+                      <p className="text-sm font-medium text-gray-900">{product.buyer.business_type || "Not specified"}</p>
                     </div>
-
                     <div className="space-y-1">
                       <p className="text-sm text-gray-500">Storage Capacity</p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {product.buyer.storage_capacity ? `${product.buyer.storage_capacity} units` : "Not specified"}
-                      </p>
+                      <p className="text-sm font-medium text-gray-900">{product.buyer.storage_capacity ? `${product.buyer.storage_capacity} units` : "Not specified"}</p>
                     </div>
                   </div>
                 )
@@ -423,30 +390,29 @@ function ProductDetails() {
           </div>
 
           <div className="lg:col-span-2 space-y-6">
-            <div
-              className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
-                transition-all duration-300 transform hover:scale-[1.01]"
-            >
+            <div className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01]">
               <div className="flex items-start p-6 border-b border-gray-100">
                 <div className="flex-1">
-                  <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                    {product.name}
-                  </h1>
+                  <h1 className="text-2xl font-bold text-gray-900 mb-1">{product.name}</h1>
                   <p className="text-sm text-gray-500">Contract ID: {id}</p>
                 </div>
                 <div className="flex items-center space-x-3">
                   <div className="flex items-center space-x-1 px-3 py-1 bg-blue-50 rounded-full">
                     <User className="h-5 w-5 text-blue-500" />
-                    <span className="text-sm text-blue-600">
-                      Verified {product.type === "sell" ? "Farmer" : "Buyer"}
-                    </span>
+                    <span className="text-sm text-blue-600">Verified {product.type === "sell" ? "Farmer" : "Buyer"}</span>
                   </div>
                   <button
                     onClick={initiateChat}
                     className="button-transition flex items-center space-x-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 hover:text-gray-900 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={!seller || !currentUserId || isOwnListing}
+                    disabled={disableButtons}
+                    title={disableButtons ? "You cannot message this listing" : undefined}
+                    aria-label={`Message ${product.type === "sell" ? "Farmer" : "Buyer"}`}
                   >
-                    <MessageSquare className="h-4 w-4" />
+                    {chatLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MessageSquare className="h-4 w-4" />
+                    )}
                     <span>Message {product.type === "sell" ? "Farmer" : "Buyer"}</span>
                   </button>
                 </div>
@@ -455,83 +421,45 @@ function ProductDetails() {
               <div className="p-6 grid grid-cols-2 gap-6 text-sm">
                 <div className="space-y-2">
                   <div className="text-sm text-gray-500">Price</div>
-                  <div className="text-2xl font-bold text-emerald-600">
-                    ₹{product.price}/{product.unit}
-                  </div>
+                  <div className="text-2xl font-bold text-emerald-600">₹{product.price}/{product.unit}</div>
                 </div>
                 <div className="space-y-2">
                   <div className="text-sm text-gray-500">Quantity</div>
-                  <div className="text-2xl font-semibold text-gray-900">
-                    {product.quantity} {product.unit}
-                  </div>
+                  <div className="text-2xl font-semibold text-gray-900">{product.quantity} {product.unit}</div>
                 </div>
               </div>
 
               <div className="p-6 text-right border-t border-gray-100">
                 <p className="text-gray-500">Total Contract Value</p>
-                <p className="text-lg font-bold text-gray-900">
-                  ₹{(product.price * product.quantity).toLocaleString()}
-                </p>
+                <p className="text-lg font-bold text-gray-900">₹{(product.price * product.quantity).toLocaleString()}</p>
               </div>
             </div>
 
-            <div
-              className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
-                transition-all duration-300 transform hover:scale-[1.01] p-6"
-            >
+            <div className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01] p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <h2 className="text-md font-semibold text-gray-900 mb-3 transition-colors duration-300 hover:text-gray-700">
-                    Product Specifications
-                  </h2>
+                  <h2 className="text-md font-semibold text-gray-900 mb-3 transition-colors duration-300 hover:text-gray-700">Product Specifications</h2>
                   <ul className="space-y-2 text-gray-600 list-item-hover">
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Category: {product.category}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Moisture Content: {product.moisture_content || "Not specified"}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Protein Level: {product.protein_level || "Not specified"}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Origin: {product.origin || "Not specified"}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Harvest Year: {product.harvest_year || "Not specified"}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Certification: {product.certification || "Not specified"}
-                    </li>
+                    <li>Category: {product.category}</li>
+                    <li>Moisture Content: {product.moisture_content || "Not specified"}</li>
+                    <li>Protein Level: {product.protein_level || "Not specified"}</li>
+                    <li>Origin: {product.origin || "Not specified"}</li>
+                    <li>Harvest Year: {product.harvest_year || "Not specified"}</li>
+                    <li>Certification: {product.certification || "Not specified"}</li>
                   </ul>
                 </div>
                 <div>
-                  <h2 className="text-md font-semibold text-gray-900 mb-3 transition-colors duration-300 hover:text-gray-700">
-                    Delivery Terms
-                  </h2>
+                  <h2 className="text-md font-semibold text-gray-900 mb-3 transition-colors duration-300 hover:text-gray-700">Delivery Terms</h2>
                   <ul className="space-y-2 text-gray-600 list-item-hover">
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Delivery Location: {product.location}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
-                      Shipping Terms: {product.shipping_terms || "Not specified"}
-                    </li>
-                    <li className="transition-colors duration-300 hover:text-gray-800">
+                    <li>Delivery Location: {product.location}</li>
+                    <li>Shipping Terms: {product.shipping_terms || "Not specified"}</li>
+                    <li>
                       Required Documentation:
                       <ul className="list-disc list-inside mt-1">
                         {product.required_docs?.length ? (
-                          product.required_docs.map((doc, index) => (
-                            <li
-                              key={index}
-                              className="transition-colors duration-300 hover:text-gray-800"
-                            >
-                              {doc}
-                            </li>
-                          ))
+                          product.required_docs.map((doc, index) => <li key={index}>{doc}</li>)
                         ) : (
-                          <li className="transition-colors duration-300 hover:text-gray-800">
-                            None
-                          </li>
+                          <li>None</li>
                         )}
                       </ul>
                     </li>
@@ -540,16 +468,12 @@ function ProductDetails() {
               </div>
             </div>
 
-            <div
-              className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
-                transition-all duration-300 p-6"
-            >
+            <div className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 p-6">
               <button
-                className="button-transition w-full flex items-center justify-center px-6 py-3 bg-emerald-600 
-                  text-white rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all 
-                  duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-md 
-                  hover:shadow-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isOwnListing}
+                className="button-transition w-full flex items-center justify-center px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-md hover:shadow-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={disableButtons}
+                title={disableButtons ? "You cannot submit an offer for this listing" : undefined}
+                aria-label="Submit Offer"
               >
                 Submit Offer
               </button>
@@ -562,10 +486,7 @@ function ProductDetails() {
         <ChatWindow
           chatId={chatId}
           currentUserId={currentUserId}
-          otherUser={{
-            name: sellerName,
-            image: seller.profile_photo_url || "",
-          }}
+          otherUser={{ name: sellerName, image: seller.profile_photo_url || "" }}
           productId={id}
           onClose={() => setShowChat(false)}
         />

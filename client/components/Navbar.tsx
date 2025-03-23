@@ -1,12 +1,12 @@
+// components/Navbar.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Sprout, ShoppingCart, LogOut, User, Bell, Menu, X } from "lucide-react";
 import { useWallet } from "../hooks/useWallet";
 import { supabase } from "../lib/supabase";
 import SearchUsers from "./SearchUsers";
-import { WalletService } from "../services/wallet.service";
+import { useAuth } from "../../src/context/AuthContext";
 
-// Simple error boundary component
 const ErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
   <div className="p-4 text-red-600">Error: {error.message}</div>
 );
@@ -18,28 +18,25 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { address } = useWallet();
+  const { address, balance } = useWallet(); // Use balance directly from useWallet
+  const { user, loading: authLoading } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [userType, setUserType] = useState<"farmer" | "buyer" | null>(null);
-  const [notifications, setNotifications] = useState(0); // Changed to 0 as default
+  const [notifications, setNotifications] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
-  const [ethBalance, setEthBalance] = useState<string>("0");
 
   const setupUserData = useCallback(async () => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || !user) {
       setIsLoading(false);
       return;
     }
 
     try {
       setIsLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("No authenticated user");
-
       const [farmerData, buyerData] = await Promise.all([
         supabase.from("farmers").select("profile_photo_url").eq("user_id", user.id).single(),
         supabase.from("buyers").select("profile_photo_url").eq("user_id", user.id).single(),
@@ -53,53 +50,19 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
         setUserType("buyer");
       }
 
-      // Setup real-time subscriptions
-      const farmerSubscription = supabase
-        .channel("farmer-profile-changes")
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "farmers", filter: `user_id=eq.${user.id}` },
-          (payload) => setProfilePhoto(payload.new.profile_photo_url)
-        )
-        .subscribe();
-
-      const buyerSubscription = supabase
-        .channel("buyer-profile-changes")
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "buyers", filter: `user_id=eq.${user.id}` },
-          (payload) => setProfilePhoto(payload.new.profile_photo_url)
-        )
-        .subscribe();
-
       setIsLoading(false);
-      return () => {
-        supabase.removeChannel(farmerSubscription);
-        supabase.removeChannel(buyerSubscription);
-      };
     } catch (err) {
       console.error("Setup user data failed:", err);
       setError(err instanceof Error ? err : new Error("Unknown error"));
       setIsLoading(false);
     }
-  }, [isAuthenticated]);
-
-  const loadEthBalance = useCallback(async () => {
-    if (!address) return;
-    try {
-      const { balance } = await WalletService.getWalletBalance(address, "onchain");
-      setEthBalance(balance);
-    } catch (error) {
-      console.error("ETH balance load failed:", error);
-    }
-  }, [address]);
+  }, [isAuthenticated, user]);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !authLoading) {
       setupUserData();
-      loadEthBalance();
     }
-  }, [isAuthenticated, setupUserData, loadEthBalance]);
+  }, [isAuthenticated, authLoading, setupUserData]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -111,7 +74,7 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  if (!isAuthenticated || location.pathname.includes("/login") || location.pathname.includes("/register")) {
+  if (!isAuthenticated || authLoading || location.pathname.includes("/login") || location.pathname.includes("/register")) {
     return null;
   }
 
@@ -128,7 +91,6 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
   };
 
   if (error) return <ErrorFallback error={error} />;
-
   return (
     <nav className="sticky top-0 z-50 w-full bg-white shadow-sm" aria-label="Main navigation">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -180,7 +142,7 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
                       alt="Profile"
                       className="h-full w-full object-cover"
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = ""; // Fallback to default if image fails
+                        (e.target as HTMLImageElement).src = "";
                         setProfilePhoto(null);
                       }}
                     />
@@ -209,7 +171,7 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
                   {address.slice(0, 6)}...{address.slice(-4)}
                 </div>
                 <div className="px-3 py-1.5 text-sm text-emerald-700 bg-emerald-50 rounded-md">
-                  {parseFloat(ethBalance).toFixed(4)} ETH
+                  {parseFloat(balance.eth).toFixed(4)} ETH
                 </div>
               </div>
             )}
@@ -247,7 +209,7 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
                   {address.slice(0, 6)}...{address.slice(-4)}
                 </div>
                 <div className="px-3 py-2 text-sm text-emerald-700 bg-emerald-50 rounded-md">
-                  {parseFloat(ethBalance).toFixed(4)} ETH
+                  {parseFloat(balance.eth).toFixed(4)} ETH
                 </div>
               </div>
             )}

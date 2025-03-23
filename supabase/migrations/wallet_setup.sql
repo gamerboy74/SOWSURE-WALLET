@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS wallets (
     encrypted_private_key TEXT,
     encrypted_mnemonic TEXT,
     balance DECIMAL(20,8) DEFAULT 0 CHECK (balance >= 0),
-    token_balance DECIMAL(20,8) DEFAULT 1000 CHECK (token_balance >= 0),
+    token_balance DECIMAL(20,8) DEFAULT 0 CHECK (token_balance >= 0),
     network TEXT DEFAULT 'sepolia',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -119,7 +119,7 @@ BEGIN
         )
         VALUES (
             NEW.id,
-            1000,  -- Initial token balance
+            0,  -- Initial token balance
             NOW(),
             NOW()
         );
