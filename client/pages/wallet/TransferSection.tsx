@@ -55,7 +55,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
 );
 
 export const TransferSection = React.memo(
-  ({ wallet, onTransferComplete, setError }: TransferSectionProps) => {
+  ({ wallet, setError }: TransferSectionProps) => {
     const [transferAmount, setTransferAmount] = useState<string>("");
     const [recipientAddress, setRecipientAddress] = useState<string>("");
     const [isTransferring, setIsTransferring] = useState(false);

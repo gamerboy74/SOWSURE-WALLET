@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Package, User, MapPin, Calendar } from "lucide-react";
+import { Package, User, MapPin, Calendar, Tag } from "lucide-react"; // Added Tag icon for category
 import { useNavigate } from "react-router-dom";
 
 interface ListingCardProps {
@@ -18,7 +18,30 @@ interface ListingCardProps {
   };
   postedDate: string;
   description: string;
+  category: string; // Added category prop
 }
+
+const customStyles = `
+  .button-transition {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+  .button-transition::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(45deg, transparent 0%, rgba(255,255,255,0.1) 100%);
+    transform: translateX(-100%);
+    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .button-transition:hover::after {
+    transform: translateX(0);
+  }
+`;
 
 const ListingCard: React.FC<ListingCardProps> = ({
   id,
@@ -31,18 +54,30 @@ const ListingCard: React.FC<ListingCardProps> = ({
   postedDate,
   description,
   type,
+  category, // Destructure the new category prop
 }) => {
   const [productImgError, setProductImgError] = useState(false);
   const [profileImgError, setProfileImgError] = useState(false);
   const navigate = useNavigate();
-  const defaultProductImage = "/images/default-product.png";
-  const defaultProfileImage = "/images/default-profile.png";
 
-  const handleProductImageError = () => setProductImgError(true);
-  const handleProfileImageError = () => setProfileImgError(true);
+  const handleProductImageError = () => {
+    setProductImgError(true);
+    console.error("Failed to load product image:", image_url);
+  };
+
+  const handleProfileImageError = () => {
+    setProfileImgError(true);
+    console.error("Failed to load profile image:", user.profileImage);
+  };
+
+  // Capitalize the first letter of the category for display
+  const formattedCategory = category
+    ? category.charAt(0).toUpperCase() + category.slice(1)
+    : "Not specified";
 
   return (
     <div className="group bg-white rounded-xl shadow-sm hover:shadow-xl overflow-hidden transition-all duration-300 transform hover:-translate-y-1">
+      <style>{customStyles}</style>
       <div
         className={`px-4 py-2 ${
           type === "sell" ? "bg-emerald-50" : "bg-blue-50"
@@ -69,6 +104,7 @@ const ListingCard: React.FC<ListingCardProps> = ({
             alt={title}
             onError={handleProductImageError}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+            loading="lazy"
           />
         )}
       </div>
@@ -91,10 +127,15 @@ const ListingCard: React.FC<ListingCardProps> = ({
             <Calendar className="h-5 w-5 mr-2 transition-transform duration-200 group-hover:scale-110" />
             <span>{new Date(postedDate).toLocaleDateString()}</span>
           </div>
+          {/* Added Category Display */}
+          <div className="flex items-center text-gray-600 hover:text-emerald-600 transition-colors duration-200">
+            <Tag className="h-5 w-5 mr-2 transition-transform duration-200 group-hover:scale-110" />
+            <span>{formattedCategory}</span>
+          </div>
         </div>
 
         <p className="text-gray-600 text-sm mb-4 line-clamp-2 group-hover:text-gray-900 transition-colors duration-200">
-          {description}
+          {description || "No description available"}
         </p>
 
         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
@@ -110,6 +151,7 @@ const ListingCard: React.FC<ListingCardProps> = ({
                   alt={user.name}
                   onError={handleProfileImageError}
                   className="w-full h-full object-cover transition-transform duration-300 group-hover/user:scale-110"
+                  loading="lazy"
                 />
               )}
             </div>
@@ -131,9 +173,10 @@ const ListingCard: React.FC<ListingCardProps> = ({
           </p>
         </div>
 
-        <button 
+        <button
           onClick={() => navigate(`/product/${id}`)}
-          className="mt-4 w-full bg-emerald-600 text-white py-2.5 rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] shadow-sm hover:shadow-md font-medium"
+          className="button-transition mt-4 w-full bg-emerald-600 text-white py-2.5 rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] shadow-sm hover:shadow-md font-medium"
+          aria-label={`View details for ${title}`}
         >
           View Details
         </button>

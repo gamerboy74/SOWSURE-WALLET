@@ -33,7 +33,7 @@ interface NavbarProps {
 function Navbar({ isAuthenticated = false }: NavbarProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { address, balance } = useWallet(); // Remove connect/disconnect
+  const { address, balance } = useWallet();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
@@ -183,7 +183,7 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
     try {
       await supabase.auth.signOut();
       setShowProfileMenu(false);
-      window.location.href = "/"; // Force page refresh
+      window.location.href = "/";
     } catch (err) {
       console.error("Error during logout:", err);
     }
@@ -192,27 +192,27 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
   return (
     <nav className="sticky top-0 z-50 w-full">
       <div className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-14 sm:h-16">
             <div className="flex items-center flex-1">
               <Link to="/" className="flex items-center">
-                <Sprout className="h-8 w-8 text-emerald-600" />
-                <span className="ml-2 text-xl font-bold text-gray-900">
+                <Sprout className="h-7 w-7 text-emerald-600" />
+                <span className="ml-2 text-lg sm:text-xl font-bold text-gray-900">
                   FarmConnect
                 </span>
               </Link>
 
               {isAuthenticated && (
-                <div className="hidden md:block ml-6 flex-1">
+                <div className="hidden md:block ml-4 sm:ml-6 flex-1 max-w-md">
                   <SearchUsers />
                 </div>
               )}
             </div>
 
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 sm:space-x-3">
               {isAuthenticated ? (
                 <>
-                  <div className="flex items-center bg-gray-100 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">
+                  <div className="flex items-center bg-gray-100 text-gray-800 px-2 py-1 sm:px-3 sm:py-1.5 rounded-full text-xs sm:text-sm font-medium">
                     <Coins className="h-4 w-4 mr-1 text-yellow-500" />
                     <span>{balance.token.toLocaleString()} USDT</span>
                   </div>
@@ -222,15 +222,15 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
                     to="/marketplace"
                     className="text-gray-600 hover:text-emerald-600 flex items-center"
                   >
-                    <ShoppingCart className="h-6 w-6" />
-                    <span className="ml-1 hidden md:inline">Marketplace</span>
+                    <ShoppingCart className="h-5 w-5 sm:h-6 sm:w-6" />
+                    <span className="ml-1 hidden md:inline text-sm sm:text-base">Marketplace</span>
                   </Link>
 
                   <div className="relative">
                     <button className="text-gray-600 hover:text-emerald-600">
-                      <Bell className="h-6 w-6" />
+                      <Bell className="h-5 w-5 sm:h-6 sm:w-6" />
                       {notifications > 0 && (
-                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full h-4 w-4 sm:h-5 sm:w-5 flex items-center justify-center">
                           {notifications}
                         </span>
                       )}
@@ -240,9 +240,9 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
                   <div className="relative" ref={profileMenuRef}>
                     <button
                       onClick={() => setShowProfileMenu(!showProfileMenu)}
-                      className="flex items-center space-x-2 text-gray-700 hover:text-emerald-600"
+                      className="flex items-center space-x-1 sm:space-x-2 text-gray-700 hover:text-emerald-600"
                     >
-                      <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center overflow-hidden">
+                      <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-full bg-emerald-100 flex items-center justify-center overflow-hidden">
                         {loading ? (
                           <div className="animate-pulse bg-emerald-200 h-full w-full" />
                         ) : profilePhoto ? (
@@ -252,16 +252,16 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <User className="h-5 w-5 text-emerald-600" />
+                          <User className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-600" />
                         )}
                       </div>
                     </button>
 
                     {showProfileMenu && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
+                      <div className="absolute right-0 mt-2 w-40 sm:w-48 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
                         <button
                           onClick={handleLogout}
-                          className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
+                          className="block w-full text-left px-3 sm:px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
                         >
                           Logout
                         </button>
@@ -271,28 +271,28 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
 
                   {address && (
                     <div className="hidden md:flex items-center space-x-2">
-                      <div className="px-4 py-2 text-sm text-emerald-700 bg-emerald-50 rounded-md">
+                      <div className="px-2 py-1 sm:px-3 sm:py-1.5 text-xs sm:text-sm text-emerald-700 bg-emerald-50 rounded-md">
                         <span className="font-mono">
                           {address.slice(0, 6)}...{address.slice(-4)}
                         </span>
                       </div>
-                      <div className="px-4 py-2 text-sm text-emerald-700 bg-emerald-50 rounded-md">
+                      <div className="px-2 py-1 sm:px-3 sm:py-1.5 text-xs sm:text-sm text-emerald-700 bg-emerald-50 rounded-md">
                         {parseFloat(ethBalance).toFixed(4)} ETH
                       </div>
                     </div>
                   )}
                 </>
               ) : (
-                <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2 sm:space-x-3">
                   <Link
                     to="/farmer/login"
-                    className="text-emerald-600 hover:text-emerald-700 px-3 py-2 text-sm font-medium"
+                    className="text-emerald-600 hover:text-emerald-700 px-2 py-1 sm:px-3 sm:py-2 text-sm font-medium"
                   >
                     Farmer Login
                   </Link>
                   <Link
                     to="/buyer/login"
-                    className="bg-emerald-600 text-white hover:bg-emerald-700 px-4 py-2 rounded-md text-sm font-medium"
+                    className="bg-emerald-600 text-white hover:bg-emerald-700 px-3 py-1 sm:px-4 sm:py-2 rounded-md text-sm font-medium"
                   >
                     Buyer Login
                   </Link>
@@ -301,40 +301,45 @@ function Navbar({ isAuthenticated = false }: NavbarProps) {
 
               <button
                 onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="md:hidden bg-emerald-50 rounded-md p-2"
+                className="md:hidden bg-emerald-50 rounded-md p-1.5 sm:p-2"
               >
                 {isMenuOpen ? (
-                  <X className="h-6 w-6 text-emerald-600" />
+                  <X className="h-5 w-5 sm:h-6 sm:w-6 text-emerald-600" />
                 ) : (
-                  <Menu className="h-6 w-6 text-emerald-600" />
+                  <Menu className="h-5 w-5 sm:h-6 sm:w-6 text-emerald-600" />
                 )}
               </button>
             </div>
           </div>
 
           {isMenuOpen && (
-            <div className="md:hidden py-4 px-4 sm:px-6 lg:px-8">
+            <div className="md:hidden py-3 px-4 sm:px-6">
               {isAuthenticated && (
                 <>
-                  <div className="mb-4">
+                  <div className="mb-3">
                     <SearchUsers />
                   </div>
                   <Link
                     to="/marketplace"
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 mb-2"
+                    className="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 mb-1 rounded-md"
                     onClick={() => setIsMenuOpen(false)}
                   >
-                    <ShoppingCart className="h-5 w-5 inline mr-2" />
+                    <ShoppingCart className="h-4 w-4 inline mr-2" />
                     Marketplace
                   </Link>
                 </>
               )}
               {address && (
-                <div className="mt-4 flex items-center px-4 py-2 text-sm text-emerald-700 bg-emerald-50 rounded-md">
-                  <Wallet className="h-4 w-4 mr-2" />
-                  <span>
-                    {address.slice(0, 6)}...{address.slice(-4)}
-                  </span>
+                <div className="mt-2 flex flex-col space-y-2">
+                  <div className="flex items-center px-3 py-2 text-sm text-emerald-700 bg-emerald-50 rounded-md">
+                    <Wallet className="h-4 w-4 mr-2" />
+                    <span>
+                      {address.slice(0, 6)}...{address.slice(-4)}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2 text-sm text-emerald-700 bg-emerald-50 rounded-md">
+                    {parseFloat(ethBalance).toFixed(4)} ETH
+                  </div>
                 </div>
               )}
             </div>

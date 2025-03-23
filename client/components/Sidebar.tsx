@@ -56,7 +56,7 @@ function Sidebar({ className = "", userType }: SidebarProps) {
     { icon: Package, label: "My Orders", path: "/buyer/orders" },
     { icon: FileText, label: "Contracts", path: "/buyer/contracts" },
     { icon: Sprout, label: "Farmers", path: "/buyer/farmers" },
-    { icon: Wallet, label: "Wallet", path: "/wallet/dashboard" }, // Updated path
+    { icon: Wallet, label: "Wallet", path: "/wallet/dashboard" },
     {
       icon: History,
       label: "Transaction History",
@@ -71,17 +71,17 @@ function Sidebar({ className = "", userType }: SidebarProps) {
 
   return (
     <div
-      className={`fixed left-0 bg-white shadow-lg transition-all duration-300 z-40 ${
-        isExpanded ? "w-64" : "w-16"
+      className={`fixed left-0 bg-white shadow-md transition-all duration-300 z-40 ${
+        isExpanded ? "w-52" : "w-14"
       } ${className}`}
       style={{
-        top: "64px",
-        height: "calc(100vh - 64px)",
+        top: "56px", // Adjusted to match the navbar height (h-14 = 56px)
+        height: "calc(100vh - 56px)",
       }}
       onMouseEnter={() => setIsExpanded(true)}
       onMouseLeave={() => setIsExpanded(false)}
     >
-      <nav className="mt-4">
+      <nav className="mt-2">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname === item.path;
@@ -90,15 +90,15 @@ function Sidebar({ className = "", userType }: SidebarProps) {
             <Link
               key={item.path}
               to={item.path}
-              className={`flex items-center px-4 py-3 transition-colors ${
+              className={`flex items-center px-3 py-2.5 transition-colors ${
                 isActive
                   ? "bg-emerald-50 text-emerald-600"
-                  : "text-gray-600 hover:bg-gray-50"
+                  : "text-gray-600 hover:bg-gray-100"
               }`}
             >
               <Icon className="h-5 w-5 min-w-[20px]" />
               <span
-                className={`ml-4 whitespace-nowrap overflow-hidden transition-all duration-300 ${
+                className={`ml-3 text-sm whitespace-nowrap overflow-hidden transition-all duration-300 ${
                   isExpanded ? "opacity-100 w-auto" : "opacity-0 w-0"
                 }`}
               >

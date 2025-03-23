@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { WalletService } from "../../services/wallet.service";
@@ -96,7 +96,6 @@ export default function WalletDashboard() {
   useEffect(() => {
     if (!wallet?.id || !wallet?.wallet_address) return;
   
-    // Explicitly type the callback to avoid type inference issues
     const unsubscribeTransactions = WalletService.subscribeToTransactions(
       wallet.id,
       (newTx: WalletTransaction) => {
@@ -106,15 +105,16 @@ export default function WalletDashboard() {
           if (existingIndex !== -1) {
             const updatedTransactions = [...prev];
             updatedTransactions[existingIndex] = newTx;
-            return updatedTransactions;
+            return [...updatedTransactions]; // Force new array
           }
-          return [newTx, ...prev].slice(0, 10);
+          return [newTx, ...prev];
         });
       }
     );
   
     let unsubscribeWebSocket: (() => void) | undefined;
     const startListener = async () => {
+      console.log("Starting WebSocket listener for wallet:", wallet.id);
       unsubscribeWebSocket = await WalletService.startTransactionListener(wallet.id, wallet.wallet_address!);
     };
     startListener();
@@ -124,6 +124,7 @@ export default function WalletDashboard() {
       if (unsubscribeWebSocket) unsubscribeWebSocket();
     };
   }, [wallet?.id, wallet?.wallet_address]);
+
   const loadWalletData = async () => {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -169,8 +170,9 @@ export default function WalletDashboard() {
   const loadTransactions = async () => {
     if (!wallet?.id) return;
     try {
-      const txs = await WalletService.getTransactionHistory(wallet.id);
-      setTransactions(txs);
+      const txs = await WalletService.getTransactionHistory(wallet.id, 50); // Set limit to 50
+      console.log('Loaded transactions:', txs.length, txs);
+      setTransactions(txs || []);
     } catch (error) {
       console.error("Error loading transactions:", error);
       setError(error instanceof Error ? error.message : "Failed to load transactions");

@@ -10,9 +10,11 @@ interface TransactionHistoryTableProps {
 export const TransactionHistoryTable = React.memo(
   ({ transactions, onRefresh }: TransactionHistoryTableProps) => {
     const [searchQuery, setSearchQuery] = useState<string>("");
+    const [currentPage, setCurrentPage] = useState<number>(1);
+    const transactionsPerPage = 10;
 
     const filteredTransactions = useMemo(() => {
-      return transactions
+      const filtered = transactions
         .filter(
           (tx) =>
             !tx.metadata?.note?.includes("Funding Request") &&
@@ -26,10 +28,32 @@ export const TransactionHistoryTable = React.memo(
                   .includes(searchQuery.toLowerCase())
               ))
         );
+      console.log('Filtered transactions length:', filtered.length);
+      console.log('Filtered transactions:', filtered);
+      return filtered;
     }, [transactions, searchQuery]);
+
+    // Calculate pagination values
+    const totalPages = Math.ceil(filteredTransactions.length / transactionsPerPage);
+    const startIndex = (currentPage - 1) * transactionsPerPage;
+    const paginatedTransactions = filteredTransactions.slice(
+      startIndex,
+      startIndex + transactionsPerPage
+    );
+
+    console.log('Total pages:', totalPages);
+    console.log('Current page:', currentPage);
+    console.log('Start index:', startIndex);
+    console.log('Paginated transactions length:', paginatedTransactions.length);
+
+    const handlePageChange = (page: number) => {
+      console.log('Changing to page:', page);
+      setCurrentPage(page);
+    };
 
     return (
       <div className="glass-card rounded-2xl p-6">
+        {/* ... existing header content ... */}
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">
             Recent Transactions
@@ -53,27 +77,15 @@ export const TransactionHistoryTable = React.memo(
             </button>
           </div>
         </div>
+        
+        {/* ... existing table content ... */}
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead>
-              <tr className="text-left text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-600">
-                <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider">
-                  Type
-                </th>
-                <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider">
-                  Amount
-                </th>
-                <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-4 py-3 font-semibold text-xs uppercase tracking-wider">
-                  Date
-                </th>
-              </tr>
-            </thead>
+            {/* ... thead unchanged ... */}
             <tbody>
-              {filteredTransactions.map((tx) => (
+              {paginatedTransactions.map((tx) => (
                 <tr key={tx.id} className="border-b last:border-0 table-row-hover dark:border-gray-600">
+                  {/* ... existing row content ... */}
                   <td className="px-4 py-3 text-gray-700 dark:text-gray-300 font-medium">{tx.type}</td>
                   <td
                     className={`px-4 py-3 font-medium ${
@@ -117,7 +129,7 @@ export const TransactionHistoryTable = React.memo(
                   </td>
                 </tr>
               ))}
-              {filteredTransactions.length === 0 && (
+              {paginatedTransactions.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-4 text-center text-gray-500 dark:text-gray-400">
                     No transactions found
@@ -126,6 +138,43 @@ export const TransactionHistoryTable = React.memo(
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Controls - removed the totalPages > 1 condition for debugging */}
+        <div className="mt-4 flex justify-between items-center">
+          <div className="text-sm text-gray-600 dark:text-gray-400">
+            Showing {startIndex + 1} - {Math.min(startIndex + transactionsPerPage, filteredTransactions.length)} 
+            of {filteredTransactions.length} transactions
+          </div>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+              className="px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <button
+                key={page}
+                onClick={() => handlePageChange(page)}
+                className={`px-3 py-1 rounded-lg ${
+                  currentPage === page
+                    ? "bg-emerald-600 text-white"
+                    : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+            <button
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     );

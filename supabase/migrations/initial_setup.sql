@@ -159,6 +159,30 @@ CREATE POLICY "Anyone can upload buyer documents" ON storage.objects FOR INSERT 
 CREATE POLICY "Anyone can update buyer documents" ON storage.objects FOR UPDATE TO public USING (bucket_id = 'buyer-documents');
 CREATE POLICY "Anyone can delete buyer documents" ON storage.objects FOR DELETE TO public USING (bucket_id = 'buyer-documents');
 
+-- Allow authenticated users to read farmer
+CREATE POLICY "Allow authenticated users to read buyers" ON farmers
+FOR SELECT
+USING (auth.role() = 'authenticated');
+
+-- Allow authenticated users to read buyers
+CREATE POLICY "Allow authenticated users to read buyers" ON buyers
+FOR SELECT
+USING (auth.role() = 'authenticated');
+
+-- Allow authenticated users to upload to product-images
+CREATE POLICY "Authenticated users can upload to product-images"
+ON storage.objects
+FOR INSERT
+TO authenticated
+WITH CHECK (bucket_id = 'product-images');
+
+-- Allow authenticated users to delete from product-images
+CREATE POLICY "Authenticated users can delete from product-images"
+ON storage.objects
+FOR DELETE
+TO authenticated
+USING (bucket_id = 'product-images');
+
 -- Add Initial Admin User and Setup
 DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') THEN CREATE EXTENSION pgcrypto; END IF; END $$;
 

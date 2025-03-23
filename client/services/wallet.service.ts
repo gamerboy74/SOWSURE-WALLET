@@ -66,22 +66,26 @@ export class WalletService {
               }
             );
 
-            const receipt = await this.wsProvider!.waitForTransaction(tx.hash);
-            if (receipt?.status === 1) {
+            console.log("Emitting new transaction from WebSocket:", newTx);
+            this.eventEmitter.emit(`transaction:${walletId}`, newTx);
+          }
+
+          const receipt = await this.wsProvider!.waitForTransaction(tx.hash);
+          if (receipt?.status === 1) {
+            const { data: currentTx } = await supabase
+              .from("wallet_transactions")
+              .select("*")
+              .eq("metadata->>txHash", tx.hash)
+              .single();
+
+            if (currentTx && currentTx.status !== "COMPLETED") {
               await supabase
                 .from("wallet_transactions")
                 .update({ status: "COMPLETED" })
-                .eq("id", newTx.id);
-              this.eventEmitter.emit(`transaction:${walletId}`, { ...newTx, status: "COMPLETED" });
-            }
-          } else if (existingTx.status === "PENDING") {
-            const receipt = await this.wsProvider!.getTransactionReceipt(tx.hash);
-            if (receipt?.status === 1) {
-              await supabase
-                .from("wallet_transactions")
-                .update({ status: "COMPLETED" })
-                .eq("id", existingTx.id);
-              this.eventEmitter.emit(`transaction:${walletId}`, { ...existingTx, status: "COMPLETED" });
+                .eq("id", currentTx.id);
+              const updatedTx = { ...currentTx, status: "COMPLETED" };
+              console.log("Emitting status update from WebSocket:", updatedTx);
+              this.eventEmitter.emit(`transaction:${walletId}`, updatedTx);
             }
           }
         }
@@ -163,7 +167,7 @@ export class WalletService {
     return data;
   }
 
-  static async getTransactionHistory(walletId: string, limit = 10): Promise<WalletTransaction[]> {
+  static async getTransactionHistory(walletId: string, limit?: number): Promise<WalletTransaction[]> {
     try {
       if (!walletId) throw new Error("Invalid wallet ID provided");
 
@@ -176,12 +180,17 @@ export class WalletService {
       if (walletError) throw walletError;
       if (!wallet?.wallet_address) throw new Error("Wallet not found or missing address");
 
-      const { data: transactions, error: finalError } = await supabase
+      let query = supabase
         .from("wallet_transactions")
         .select("*")
         .eq("wallet_id", walletId)
-        .order("created_at", { ascending: false })
-        .limit(limit);
+        .order("created_at", { ascending: false });
+
+      if (limit !== undefined) {
+        query = query.limit(limit);
+      }
+
+      const { data: transactions, error: finalError } = await query;
 
       if (finalError) throw finalError;
 
@@ -242,17 +251,61 @@ export class WalletService {
           { toAddress, note: "USDT Transfer", network: "sepolia" }
         );
 
+        const updatedTx = { ...newTx, status: "COMPLETED" };
         await supabase
           .from("wallet_transactions")
           .update({ status: "COMPLETED" })
           .eq("id", newTx.id);
 
-        this.eventEmitter.emit(`transaction:${fromWalletId}`, { ...newTx, status: "COMPLETED" });
+        console.log("Emitting USDT transfer:", updatedTx);
+        this.eventEmitter.emit(`transaction:${fromWalletId}`, updatedTx);
         return { message: "USDT transfer completed" };
       }
     } catch (error) {
       console.error("Error transferring funds:", error);
       throw error instanceof Error ? error : new Error("Transfer failed");
+    }
+  }
+
+  static async sendTransaction(fromPrivateKey: string, toAddress: string, amount: string): Promise<TransactionResponse> {
+    try {
+      const wallet = new Wallet(fromPrivateKey, this.provider);
+      const tx = await wallet.sendTransaction({
+        to: toAddress,
+        value: ethers.parseEther(amount),
+      });
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const { data: walletData } = await supabase
+        .from("wallets")
+        .select("id, wallet_address")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!walletData) throw new Error("Wallet not found");
+
+      this.processedTxHashes.add(tx.hash);
+
+      const newTx = await this.createTransaction(
+        walletData.id,
+        parseFloat(amount),
+        "WITHDRAWAL",
+        {
+          txHash: tx.hash,
+          toAddress,
+          network: "sepolia"
+        }
+      );
+
+      console.log("Emitting ETH withdrawal (PENDING):", newTx);
+      this.eventEmitter.emit(`transaction:${walletData.id}`, newTx);
+
+      return tx;
+    } catch (error) {
+      console.error("Error sending transaction:", error);
+      throw error;
     }
   }
 
@@ -311,46 +364,6 @@ export class WalletService {
   static async requestTestEth(address: string) {
     console.log("Requesting test ETH for address:", address);
     console.log("Please get test ETH from: https://sepoliafaucet.com");
-  }
-
-  static async sendTransaction(fromPrivateKey: string, toAddress: string, amount: string): Promise<TransactionResponse> {
-    try {
-      const wallet = new Wallet(fromPrivateKey, this.provider);
-      const tx = await wallet.sendTransaction({
-        to: toAddress,
-        value: ethers.parseEther(amount),
-      });
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
-      const { data: walletData } = await supabase
-        .from("wallets")
-        .select("id, wallet_address")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!walletData) throw new Error("Wallet not found");
-
-      this.processedTxHashes.add(tx.hash);
-
-      const newTx = await this.createTransaction(
-        walletData.id,
-        parseFloat(amount),
-        "WITHDRAWAL",
-        {
-          txHash: tx.hash,
-          toAddress,
-          network: "sepolia"
-        }
-      );
-
-      // Status update handled by WebSocket listener
-      return tx;
-    } catch (error) {
-      console.error("Error sending transaction:", error);
-      throw error;
-    }
   }
 
   static async getWalletInfo(): Promise<{
