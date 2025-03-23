@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   Plus,
   Search,
@@ -7,12 +13,15 @@ import {
   Loader2,
   Upload,
   X,
+  Trash2,
   Package,
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { debounce } from "lodash";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
+import ProductCard from "../ProductCard";
+import DialogBox from "../DialogBox";
 
 const customStyles = `
   .dropdown-constrain {
@@ -169,6 +178,8 @@ interface UploadState {
   userId: string | null;
   productImgError: boolean;
   deleting: string | null;
+  showDeleteDialog: boolean;
+  productToDelete: Product | null;
 }
 
 const initialFormData: ProductFormData = {
@@ -198,6 +209,8 @@ const initialUploadState: UploadState = {
   userId: null,
   productImgError: false,
   deleting: null,
+  showDeleteDialog: false,
+  productToDelete: null,
 };
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -283,7 +296,7 @@ function Products() {
           .eq("farmer_id", farmerData.id)
           .order("created_at", { ascending: false });
         if (error) throw error;
-        productsData = [...productsData, ...((data as Product[]) || [])];
+        productsData = [...productsData, ...(data || [])];
       }
       if (buyerData) {
         const { data, error } = await supabase
@@ -292,15 +305,12 @@ function Products() {
           .eq("buyer_id", buyerData.id)
           .order("created_at", { ascending: false });
         if (error) throw error;
-        productsData = [...productsData, ...((data as Product[]) || [])];
+        productsData = [...productsData, ...(data || [])];
       }
 
       setState((prev) => ({ ...prev, products: productsData, loading: false }));
     } catch (err) {
-      console.error("Error loading products:", {
-        message: err instanceof Error ? err.message : "Unknown error",
-        details: err instanceof Object ? JSON.stringify(err, null, 2) : err,
-      });
+      console.error("Error loading products:", err);
       setState((prev) => ({
         ...prev,
         error: err instanceof Error ? err.message : "Failed to load products",
@@ -310,13 +320,11 @@ function Products() {
   }, [state.userId]);
 
   useEffect(() => {
-    console.log("Products useEffect triggered for loadProducts, userId:", state.userId);
     if (state.userId) {
       loadProducts();
     }
   }, [state.userId, loadProducts]);
 
-  // Real-time updates for products
   useEffect(() => {
     if (!state.userId) return;
 
@@ -326,16 +334,22 @@ function Products() {
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "products" },
         async (payload) => {
-          const deletedProduct = payload.old as { id: string; image_url: string | null };
+          const deletedProduct = payload.old as {
+            id: string;
+            image_url: string | null;
+          };
           if (deletedProduct.image_url) {
-            const filePath = deletedProduct.image_url.split("/product-images/")[1];
+            const filePath =
+              deletedProduct.image_url.split("/product-images/")[1];
             if (filePath) {
               const { error: deleteImageError } = await supabase.storage
                 .from("product-images")
                 .remove([filePath]);
-
               if (deleteImageError) {
-                console.error("Error deleting image from bucket:", deleteImageError);
+                console.error(
+                  "Error deleting image from bucket:",
+                  deleteImageError
+                );
               } else {
                 console.log(`Image deleted from bucket: ${filePath}`);
               }
@@ -363,7 +377,6 @@ function Products() {
 
       const file = e.target.files[0];
       const validTypes = ["image/png", "image/jpeg", "image/jpg"];
-
       if (!validTypes.includes(file.type)) {
         throw new Error("Only PNG, JPG, and JPEG files are allowed");
       }
@@ -371,7 +384,11 @@ function Products() {
       const maxSize = 10 * 1024 * 1024;
       if (file.size > maxSize) {
         throw new Error(
-          `File size must be less than 10MB (current size: ${(file.size / 1024 / 1024).toFixed(2)}MB)`
+          `File size must be less than 10MB (current size: ${(
+            file.size /
+            1024 /
+            1024
+          ).toFixed(2)}MB)`
         );
       }
 
@@ -381,28 +398,19 @@ function Products() {
       if (!user) throw new Error("Please sign in to upload images");
 
       const fileExt = file.name.split(".").pop()?.toLowerCase();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const fileName = `${Date.now()}-${Math.random()
+        .toString(36)
+        .substring(2)}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`;
 
       setState((prev) => ({ ...prev, uploading: true, error: null }));
 
-      console.log("File object:", file);
-      console.log("Uploading file:", {
-        name: file.name,
-        type: file.type,
-        size: `${(file.size / 1024 / 1024).toFixed(2)}MB`,
-        path: filePath,
-      });
-
-      const { data: session, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) {
-        console.error("Error fetching session:", sessionError);
+      const { data: session, error: sessionError } =
+        await supabase.auth.getSession();
+      if (sessionError)
         throw new Error("Failed to fetch session: " + sessionError.message);
-      }
       const accessToken = session?.session?.access_token;
       if (!accessToken) throw new Error("No access token available");
-
-      console.log("Access token:", accessToken);
 
       const response = await fetch(
         `${SUPABASE_URL}/storage/v1/object/product-images/${filePath}`,
@@ -419,27 +427,17 @@ function Products() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Upload failed:", {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText,
-        });
-        throw new Error(`Upload failed: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`Upload failed: ${response.statusText} - ${errorText}`);
       }
 
       const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/product-images/${filePath}`;
-
-      console.log("Upload successful, public URL:", publicUrl);
       setState((prev) => ({
         ...prev,
         uploading: false,
         formData: { ...prev.formData, image_url: publicUrl },
       }));
     } catch (err) {
-      console.error("Error uploading image:", {
-        message: err instanceof Error ? err.message : "Unknown error",
-        details: err instanceof Object ? JSON.stringify(err, null, 2) : err,
-      });
+      console.error("Error uploading image:", err);
       setState((prev) => ({
         ...prev,
         uploading: false,
@@ -450,10 +448,7 @@ function Products() {
   };
 
   const handleProductImageError = () => {
-    setState((prev) => ({
-      ...prev,
-      productImgError: true,
-    }));
+    setState((prev) => ({ ...prev, productImgError: true }));
     console.error("Failed to load image:", state.formData.image_url);
   };
 
@@ -461,9 +456,11 @@ function Products() {
     const errors: Partial<ProductFormData> = {};
     if (!data.name.trim()) errors.name = "Name is required";
     const price = parseFloat(data.price);
-    if (isNaN(price) || price <= 0) errors.price = "Price must be a positive number";
+    if (isNaN(price) || price <= 0)
+      errors.price = "Price must be a positive number";
     const quantity = parseFloat(data.quantity);
-    if (isNaN(quantity) || quantity <= 0) errors.quantity = "Quantity must be a positive number";
+    if (isNaN(quantity) || quantity <= 0)
+      errors.quantity = "Quantity must be a positive number";
     if (!data.location.trim()) errors.location = "Location is required";
     return errors;
   };
@@ -490,7 +487,9 @@ function Products() {
           .eq("user_id", user.id)
           .single();
         if (error || !data)
-          throw new Error("You must be registered as a farmer to create a sell listing");
+          throw new Error(
+            "You must be registered as a farmer to create a sell listing"
+          );
         farmerData = data;
       } else {
         const { data, error } = await supabase
@@ -499,7 +498,9 @@ function Products() {
           .eq("user_id", user.id)
           .single();
         if (error || !data)
-          throw new Error("You must be registered as a buyer to create a buy listing");
+          throw new Error(
+            "You must be registered as a buyer to create a buy listing"
+          );
         buyerData = data;
       }
 
@@ -509,8 +510,8 @@ function Products() {
         type: state.formData.type,
         name: state.formData.name,
         description: state.formData.description || null,
-        price: parseFloat(state.formData.price) || 0,
-        quantity: parseFloat(state.formData.quantity) || 0,
+        price: parseFloat(state.formData.price),
+        quantity: parseFloat(state.formData.quantity),
         unit: state.formData.unit,
         category: state.formData.category,
         image_url: state.formData.image_url || null,
@@ -524,7 +525,6 @@ function Products() {
           .select("image_url")
           .eq("id", state.editingId)
           .single();
-
         if (fetchError) throw fetchError;
 
         const { error: updateError } = await supabase
@@ -537,15 +537,14 @@ function Products() {
           existingProduct?.image_url &&
           existingProduct.image_url !== state.formData.image_url
         ) {
-          const oldFilePath = existingProduct.image_url.split("/product-images/")[1];
+          const oldFilePath =
+            existingProduct.image_url.split("/product-images/")[1];
           if (oldFilePath) {
             const { error: deleteImageError } = await supabase.storage
               .from("product-images")
               .remove([oldFilePath]);
             if (deleteImageError) {
               console.error("Error deleting old image:", deleteImageError);
-            } else {
-              console.log(`Old image deleted: ${oldFilePath}`);
             }
           }
         }
@@ -564,10 +563,7 @@ function Products() {
         editingId: null,
       }));
     } catch (err) {
-      console.error("Error saving product:", {
-        message: err instanceof Error ? err.message : "Unknown error",
-        details: err instanceof Object ? JSON.stringify(err, null, 2) : err,
-      });
+      console.error("Error saving product:", err);
       setState((prev) => ({
         ...prev,
         error: err instanceof Error ? err.message : "Failed to save product",
@@ -595,18 +591,32 @@ function Products() {
     }));
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this product?")) return;
+  const handleDelete = (product: Product) => {
+    setState((prev) => ({
+      ...prev,
+      showDeleteDialog: true,
+      productToDelete: product,
+    }));
+  };
+
+  const confirmDelete = async () => {
+    if (!state.productToDelete) return;
+
+    const id = state.productToDelete.id;
 
     try {
-      setState((prev) => ({ ...prev, deleting: id, error: null }));
+      setState((prev) => ({
+        ...prev,
+        deleting: id,
+        error: null,
+        showDeleteDialog: false,
+      }));
 
       const { data: product, error: fetchError } = await supabase
         .from("products")
         .select("image_url")
         .eq("id", id)
         .single();
-
       if (fetchError) throw fetchError;
 
       if (product?.image_url) {
@@ -615,11 +625,11 @@ function Products() {
           const { error: deleteImageError } = await supabase.storage
             .from("product-images")
             .remove([filePath]);
-
           if (deleteImageError) {
-            console.error("Error deleting image from bucket:", deleteImageError);
-          } else {
-            console.log(`Image deleted from bucket: ${filePath}`);
+            console.error(
+              "Error deleting image from bucket:",
+              deleteImageError
+            );
           }
         }
       }
@@ -628,22 +638,28 @@ function Products() {
         .from("products")
         .delete()
         .eq("id", id);
-
       if (deleteProductError) throw deleteProductError;
 
       await loadProducts();
-      setState((prev) => ({ ...prev, deleting: null }));
+      setState((prev) => ({ ...prev, deleting: null, productToDelete: null }));
     } catch (err) {
-      console.error("Error deleting product:", {
-        message: err instanceof Error ? err.message : "Unknown error",
-        details: err instanceof Object ? JSON.stringify(err, null, 2) : err,
-      });
+      console.error("Error deleting product:", err);
       setState((prev) => ({
         ...prev,
         error: err instanceof Error ? err.message : "Failed to delete product",
         deleting: null,
+        showDeleteDialog: false,
+        productToDelete: null,
       }));
     }
+  };
+
+  const cancelDelete = () => {
+    setState((prev) => ({
+      ...prev,
+      showDeleteDialog: false,
+      productToDelete: null,
+    }));
   };
 
   const debouncedSetSearchQuery = useCallback(
@@ -656,16 +672,25 @@ function Products() {
   const filteredProducts = useMemo(() => {
     return state.products.filter((product) => {
       const matchesCategory =
-        state.selectedCategory === "all" || product.category === state.selectedCategory;
+        state.selectedCategory === "all" ||
+        product.category === state.selectedCategory;
       const matchesStatus =
-        state.selectedStatus === "all" || product.status === state.selectedStatus;
+        state.selectedStatus === "all" ||
+        product.status === state.selectedStatus;
       const matchesSearch =
         product.name.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
-        product.description?.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
+        product.description
+          ?.toLowerCase()
+          .includes(state.searchQuery.toLowerCase()) ||
         false;
       return matchesCategory && matchesSearch && matchesStatus;
     });
-  }, [state.products, state.selectedCategory, state.selectedStatus, state.searchQuery]);
+  }, [
+    state.products,
+    state.selectedCategory,
+    state.selectedStatus,
+    state.searchQuery,
+  ]);
 
   const getStatusCount = (status: string) => {
     return state.products.filter((p) =>
@@ -743,300 +768,333 @@ function Products() {
           </div>
         )}
 
-        {state.showForm && (
-          <div className="modal-overlay fixed inset-0 bg-black/50 flex items-center justify-center p-4">
-            <div className="modal-content bg-white rounded-xl shadow-xl w-full max-w-md relative">
-              <div className="sticky top-0 bg-white p-4 border-b border-gray-100 z-10">
-                <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    {state.editingId ? "Edit Product" : "Add New Product"}
-                  </h2>
-                  <button
-                    onClick={() =>
-                      setState((prev) => ({
-                        ...prev,
-                        showForm: false,
-                        formData: initialFormData,
-                        editingId: null,
-                      }))
-                    }
-                    className="text-gray-400 hover:text-gray-500"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-              <div className="p-4">
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Listing Type <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      required
-                      value={state.formData.type}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, type: e.target.value as "sell" | "buy" },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
-                    >
-                      <option value="sell">Selling</option>
-                      <option value="buy">Buying</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Product Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={state.formData.name}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, name: e.target.value },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Description
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={state.formData.description}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, description: e.target.value },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Price (₹) <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      min="0"
-                      step="0.01"
-                      value={state.formData.price}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, price: e.target.value },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Quantity <span className="text-red-500">*</span>
-                    </label>
-                    <div className="mt-1 flex rounded-md shadow-sm">
-                      <input
-                        type="number"
-                        required
-                        min="0"
-                        step="0.01"
-                        value={state.formData.quantity}
-                        onChange={(e) =>
-                          setState((prev) => ({
-                            ...prev,
-                            formData: { ...prev.formData, quantity: e.target.value },
-                          }))
-                        }
-                        className="flex-1 rounded-l-md border-gray-300 focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
-                      />
-                      <select
-                        value={state.formData.unit}
-                        onChange={(e) =>
-                          setState((prev) => ({
-                            ...prev,
-                            formData: { ...prev.formData, unit: e.target.value },
-                          }))
-                        }
-                        className="w-20 rounded-r-md border-l-0 border-gray-300 focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
-                      >
-                        <option value="kg">kg</option>
-                        <option value="quintal">quintal</option>
-                        <option value="ton">ton</option>
-                        <option value="piece">piece</option>
-                        <option value="dozen">dozen</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Category <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      required
-                      value={state.formData.category}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, category: e.target.value },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
-                    >
-                      <option value="grains">Grains</option>
-                      <option value="vegetables">Vegetables</option>
-                      <option value="fruits">Fruits</option>
-                      <option value="pulses">Pulses</option>
-                      <option value="herbs">Herbs</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Location <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={state.formData.location}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, location: e.target.value },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Product Image
-                    </label>
-                    <div className="mt-1 flex justify-center px-2 pt-2 pb-2 border-2 border-gray-300 border-dashed rounded-md">
-                      <div className="space-y-1 text-center">
-                        {state.formData.image_url ? (
-                          <div className="flex flex-col items-center">
-                            {state.productImgError ? (
-                              <div className="h-16 w-16 bg-gray-100 flex items-center justify-center rounded-md">
-                                <Package className="h-8 w-8 text-gray-400" />
-                              </div>
-                            ) : (
-                              <img
-                                src={state.formData.image_url}
-                                alt="Product"
-                                className="h-16 w-16 object-cover rounded-md"
-                                onError={handleProductImageError}
-                              />
-                            )}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setState((prev) => ({
-                                  ...prev,
-                                  formData: { ...prev.formData, image_url: "" },
-                                }))
-                              }
-                              className="mt-1 text-xs text-red-600 hover:text-red-800"
-                            >
-                              Remove Image
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center">
-                            {state.uploading ? (
-                              <div className="flex items-center justify-center">
-                                <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
-                                <span className="ml-2 text-sm text-gray-600">Uploading...</span>
-                              </div>
-                            ) : (
-                              <>
-                                <Upload className="mx-auto h-5 w-5 text-gray-400" />
-                                <div className="flex text-xs text-gray-600">
-                                  <label className="relative cursor-pointer bg-white rounded-md font-medium text-emerald-600 hover:text-emerald-500">
-                                    <span>Upload</span>
-                                    <input
-                                      type="file"
-                                      className="sr-only"
-                                      accept="image/*"
-                                      onChange={handleImageUpload}
-                                      disabled={state.uploading}
-                                    />
-                                  </label>
-                                </div>
-                                <p className="text-xs text-gray-500">PNG, JPG up to 10MB</p>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Status
-                    </label>
-                    <select
-                      value={state.formData.status}
-                      onChange={(e) =>
-                        setState((prev) => ({
-                          ...prev,
-                          formData: { ...prev.formData, status: e.target.value },
-                        }))
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
-                    >
-                      <option value="active">Active</option>
-                      <option value="draft">Draft</option>
-                      <option value={state.formData.type === "sell" ? "sold_out" : "fulfilled"}>
-                        {state.formData.type === "sell" ? "Sold Out" : "Fulfilled"}
-                      </option>
-                      <option value="archived">Archived</option>
-                    </select>
-                  </div>
-
-                  <div className="flex justify-end space-x-2 mt-4">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setState((prev) => ({
-                          ...prev,
-                          showForm: false,
-                          formData: initialFormData,
-                          editingId: null,
-                        }))
-                      }
-                      className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
-                    >
-                      {state.editingId ? "Update Product" : "Add Product"}
-                    </button>
-                  </div>
-                </form>
+        <DialogBox
+          isOpen={state.showForm}
+          onClose={() =>
+            setState((prev) => ({
+              ...prev,
+              showForm: false,
+              formData: initialFormData,
+              editingId: null,
+            }))
+          }
+          title={state.editingId ? "Edit Product" : "Add New Product"}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  setState((prev) => ({
+                    ...prev,
+                    showForm: false,
+                    formData: initialFormData,
+                    editingId: null,
+                  }))
+                }
+                className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                form="product-form"
+                className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+              >
+                {state.editingId ? "Update Product" : "Add Product"}
+              </button>
+            </>
+          }
+        >
+          <form id="product-form" onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Listing Type <span className="text-red-500">*</span>
+              </label>
+              <select
+                required
+                value={state.formData.type}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: {
+                      ...prev.formData,
+                      type: e.target.value as "sell" | "buy",
+                    },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
+              >
+                <option value="sell">Selling</option>
+                <option value="buy">Buying</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Product Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={state.formData.name}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, name: e.target.value },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Description
+              </label>
+              <textarea
+                rows={2}
+                value={state.formData.description}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, description: e.target.value },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Price (₹) <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                required
+                min="0"
+                step="0.01"
+                value={state.formData.price}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, price: e.target.value },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Quantity <span className="text-red-500">*</span>
+              </label>
+              <div className="mt-1 flex rounded-md shadow-sm">
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  step="0.01"
+                  value={state.formData.quantity}
+                  onChange={(e) =>
+                    setState((prev) => ({
+                      ...prev,
+                      formData: { ...prev.formData, quantity: e.target.value },
+                    }))
+                  }
+                  className="flex-1 rounded-l-md border-gray-300 focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
+                />
+                <select
+                  value={state.formData.unit}
+                  onChange={(e) =>
+                    setState((prev) => ({
+                      ...prev,
+                      formData: { ...prev.formData, unit: e.target.value },
+                    }))
+                  }
+                  className="w-20 rounded-r-md border-l-0 border-gray-300 focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
+                >
+                  <option value="kg">kg</option>
+                  <option value="quintal">quintal</option>
+                  <option value="ton">ton</option>
+                  <option value="piece">piece</option>
+                  <option value="dozen">dozen</option>
+                </select>
               </div>
             </div>
-          </div>
-        )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Category <span className="text-red-500">*</span>
+              </label>
+              <select
+                required
+                value={state.formData.category}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, category: e.target.value },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
+              >
+                <option value="grains">Grains</option>
+                <option value="vegetables">Vegetables</option>
+                <option value="fruits">Fruits</option>
+                <option value="pulses">Pulses</option>
+                <option value="herbs">Herbs</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Location <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={state.formData.location}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, location: e.target.value },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Product Image
+              </label>
+              <div className="mt-1 flex justify-center px-2 pt-2 pb-2 border-2 border-gray-300 border-dashed rounded-md">
+                <div className="space-y-1 text-center">
+                  {state.formData.image_url ? (
+                    <div className="flex flex-col items-center">
+                      {state.productImgError ? (
+                        <div className="h-16 w-16 bg-gray-100 flex items-center justify-center rounded-md">
+                          <Package className="h-8 w-8 text-gray-400" />
+                        </div>
+                      ) : (
+                        <img
+                          src={state.formData.image_url}
+                          alt="Product"
+                          className="h-16 w-16 object-cover rounded-md"
+                          onError={handleProductImageError}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setState((prev) => ({
+                            ...prev,
+                            formData: { ...prev.formData, image_url: "" },
+                          }))
+                        }
+                        className="mt-1 text-xs text-red-600 hover:text-red-800"
+                      >
+                        Remove Image
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center">
+                      {state.uploading ? (
+                        <div className="flex items-center justify-center">
+                          <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+                          <span className="ml-2 text-sm text-gray-600">
+                            Uploading...
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <Upload className="mx-auto h-5 w-5 text-gray-400" />
+                          <div className="flex text-xs text-gray-600">
+                            <label className="relative cursor-pointer bg-white rounded-md font-medium text-emerald-600 hover:text-emerald-500">
+                              <span>Upload</span>
+                              <input
+                                type="file"
+                                className="sr-only"
+                                accept="image/*"
+                                onChange={handleImageUpload}
+                                disabled={state.uploading}
+                              />
+                            </label>
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            PNG, JPG up to 10MB
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Status
+              </label>
+              <select
+                value={state.formData.status}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, status: e.target.value },
+                  }))
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 text-sm py-1 dropdown-constrain"
+              >
+                <option value="active">Active</option>
+                <option value="draft">Draft</option>
+                <option
+                  value={
+                    state.formData.type === "sell" ? "sold_out" : "fulfilled"
+                  }
+                >
+                  {state.formData.type === "sell" ? "Sold Out" : "Fulfilled"}
+                </option>
+                <option value="archived">Archived</option>
+              </select>
+            </div>
+          </form>
+        </DialogBox>
+
+        <DialogBox
+          isOpen={state.showDeleteDialog}
+          onClose={cancelDelete}
+          title="Confirm Deletion"
+          footer={
+            <>
+              <button
+                onClick={cancelDelete}
+                className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm flex items-center"
+                disabled={state.deleting === state.productToDelete?.id}
+              >
+                {state.deleting === state.productToDelete?.id ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </button>
+            </>
+          }
+        >
+          {state.productToDelete && (
+            <div className="flex items-center space-x-3">
+              <Trash2 className="h-6 w-6 text-red-600" />
+              <p className="text-gray-700">
+                Are you sure you want to delete{" "}
+                <span className="font-semibold">
+                  {state.productToDelete.name}
+                </span>
+                ? This action cannot be undone.
+              </p>
+            </div>
+          )}
+        </DialogBox>
 
         <div className="mb-6 border-b border-gray-200">
           <nav
@@ -1052,7 +1110,9 @@ function Products() {
             ].map(({ key, label }) => (
               <button
                 key={key}
-                onClick={() => setState((prev) => ({ ...prev, selectedStatus: key }))}
+                onClick={() =>
+                  setState((prev) => ({ ...prev, selectedStatus: key }))
+                }
                 className={`
                   status-tab whitespace-nowrap pb-4 px-1 border-b-2 font-medium text-sm
                   ${
@@ -1094,7 +1154,10 @@ function Products() {
               className="filter-select pl-10 pr-4 py-2.5 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm sm:text-base transition-all appearance-none bg-white dropdown-constrain"
               value={state.selectedCategory}
               onChange={(e) =>
-                setState((prev) => ({ ...prev, selectedCategory: e.target.value }))
+                setState((prev) => ({
+                  ...prev,
+                  selectedCategory: e.target.value,
+                }))
               }
             >
               <option value="all">All Categories</option>
@@ -1110,90 +1173,14 @@ function Products() {
 
         <div className="product-grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredProducts.map((product) => (
-            <div
+            <ProductCard
               key={product.id}
-              className="product-card bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100"
-            >
-              <div className="relative overflow-hidden">
-                {product.image_url ? (
-                  <img
-                    src={product.image_url}
-                    alt={product.name}
-                    className="product-image w-full h-48 object-cover"
-                    loading="lazy"
-                    onError={handleProductImageError}
-                  />
-                ) : (
-                  <div className="w-full h-48 bg-gray-50 flex items-center justify-center">
-                    <Package className="h-12 w-12 text-gray-300" />
-                  </div>
-                )}
-                <div
-                  className={`absolute top-4 left-4 px-3 py-1 rounded-full text-xs font-medium ${
-                    product.type === "sell"
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-blue-100 text-blue-700"
-                  }`}
-                >
-                  {product.type === "sell" ? "Selling" : "Buying"}
-                </div>
-              </div>
-              <div className="product-card-content p-5">
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-base font-semibold text-gray-900 line-clamp-1">
-                    {product.name}
-                  </h3>
-                  <span
-                    className={`px-2 py-0.5 text-xs rounded-full ${
-                      product.status === "active"
-                        ? "bg-green-100 text-green-800"
-                        : product.status === "draft"
-                        ? "bg-gray-100 text-gray-800"
-                        : product.status === "sold_out" || product.status === "fulfilled"
-                        ? "bg-blue-100 text-blue-800"
-                        : "bg-yellow-100 text-yellow-800"
-                    }`}
-                  >
-                    {product.status.charAt(0).toUpperCase() + product.status.slice(1)}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600 mb-2 line-clamp-2">
-                  {product.description}
-                </p>
-                <div className="flex justify-between items-center mb-3">
-                  <div>
-                    <p className="text-emerald-600 font-semibold text-sm">
-                      ₹{product.price}/{product.unit}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {product.quantity} {product.unit}
-                    </p>
-                  </div>
-                  <span className="px-2 py-0.5 bg-gray-100 text-gray-800 rounded-full text-xs">
-                    {product.category}
-                  </span>
-                </div>
-                <div className="flex space-x-3 mt-4">
-                  <button
-                    onClick={() => handleEdit(product)}
-                    className="button-transition flex-1 bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700 text-sm font-medium"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(product.id)}
-                    className="button-transition flex-1 border-2 border-red-600 text-red-600 py-2 rounded-lg hover:bg-red-50 text-sm font-medium"
-                    disabled={state.deleting === product.id}
-                  >
-                    {state.deleting === product.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin inline-block" />
-                    ) : (
-                      "Delete"
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
+              product={product}
+              onEdit={handleEdit}
+              onDelete={() => handleDelete(product)}
+              deleting={state.deleting}
+              handleImageError={handleProductImageError}
+            />
           ))}
         </div>
       </div>
