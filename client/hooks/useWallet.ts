@@ -7,17 +7,16 @@ export function useWallet() {
   const [address, setAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState({ eth: "0", token: 0 });
   const [prices, setPrices] = useState({ eth: 150000, usdt: 83 }); // Default prices in INR
-  const [loading, setLoading] = useState(false); // Add loading state
+  const [loading, setLoading] = useState(false);
 
   const createWallet = async () => {
     try {
       console.log("Starting wallet creation...");
-      setLoading(true); // Add loading state
+      setLoading(true);
 
       const response = await WalletService.createWallet();
       console.log("Wallet created, updating state...");
 
-      // Update state immediately
       setAddress(response.address);
       setBalance((prev) => ({
         ...prev,
@@ -25,7 +24,6 @@ export function useWallet() {
         token: 1000,
       }));
 
-      // Force immediate balance check
       if (response.address) {
         const { balance } = await WalletService.getWalletBalance(
           response.address,
@@ -52,17 +50,17 @@ export function useWallet() {
         } = await supabase.auth.getUser();
         if (!user || !mounted) return;
 
-        // First try to get existing wallet with proper headers
-        const { data: walletRecord } = await supabase
+        const { data: walletRecords, error } = await supabase
           .from("wallets")
           .select("*")
-          .eq("user_id", user.id)
-          .single()
-          .throwOnError();
+          .eq("user_id", user.id);
 
-        // If no wallet exists, create one immediately
-        if (!walletRecord) {
-          console.log("Creating new wallet automatically...");
+        if (error) {
+          throw new Error(`Supabase query failed: ${error.message}`);
+        }
+
+        if (!walletRecords || walletRecords.length === 0) {
+          console.log("No wallet found, creating new wallet automatically...");
           const response = await WalletService.createWallet();
           if (mounted) {
             setAddress(response.address);
@@ -70,7 +68,6 @@ export function useWallet() {
               ...prev,
               token: 1000,
             }));
-            // Store credentials in localStorage temporarily
             localStorage.setItem(
               "tempWalletCredentials",
               JSON.stringify({
@@ -84,7 +81,14 @@ export function useWallet() {
           return;
         }
 
-        // If wallet exists but needs blockchain setup
+        if (walletRecords.length > 1) {
+          console.warn(
+            `Multiple wallets found for user ${user.id}. Using the first one.`
+          );
+        }
+
+        const walletRecord = walletRecords[0];
+
         if (!walletRecord.wallet_address) {
           const walletInfo = await WalletService.getOrCreateWallet();
           if (mounted && walletInfo) {
@@ -100,7 +104,6 @@ export function useWallet() {
 
     initWallet();
 
-    // Load initial ETH balance
     const loadEthBalance = async () => {
       if (address) {
         try {
@@ -117,11 +120,9 @@ export function useWallet() {
       }
     };
 
-    // Poll ETH balance more frequently (every 10 seconds)
     loadEthBalance();
     const pollEthBalance = setInterval(loadEthBalance, 10000);
 
-    // Real-time subscription to wallet changes
     const walletSubscription = supabase
       .channel("wallet_changes")
       .on(
@@ -133,8 +134,7 @@ export function useWallet() {
               ...prev,
               token: payload.new.token_balance,
             }));
-            // Also refresh ETH balance when token balance changes
-            loadEthBalance();
+            await loadEthBalance();
           }
         }
       )
@@ -145,11 +145,11 @@ export function useWallet() {
       clearInterval(pollEthBalance);
       walletSubscription.unsubscribe();
     };
-  }, [address]); // Add address as dependency
+  }, [address]);
 
   useEffect(() => {
     let mounted = true;
-    const pollInterval = 15000; // 15 seconds
+    const pollInterval = 15000;
 
     const loadEthBalance = async () => {
       if (address) {
@@ -167,13 +167,9 @@ export function useWallet() {
       }
     };
 
-    // Load initial balance
     loadEthBalance();
-
-    // Set up polling
     const intervalId = setInterval(loadEthBalance, pollInterval);
 
-    // Set up block listener for quicker updates
     if (address) {
       const provider = WalletService.provider;
       provider.on("block", async () => {
@@ -200,20 +196,17 @@ export function useWallet() {
 
     const fetchPrices = async () => {
       try {
-        // Check cache first
         const cached = localStorage.getItem("cached_prices");
         if (cached) {
           const { prices: cachedPrices, timestamp } = JSON.parse(cached);
           const cacheAge = Date.now() - timestamp;
 
-          // Use cache if less than 10 minutes old
           if (cacheAge < 10 * 60 * 1000) {
             setPrices(cachedPrices);
             return;
           }
         }
 
-        // Attempt to fetch from Binance API (better CORS support)
         const [ethResponse, usdtResponse] = await Promise.all([
           fetch("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"),
           fetch("https://api.binance.com/api/v3/ticker/price?symbol=USDTBIDR"),
@@ -228,14 +221,12 @@ export function useWallet() {
           usdtResponse.json(),
         ]);
 
-        // Convert prices to INR (approximate conversion)
-        const usdToInr = 83; // Fixed conversion rate
+        const usdToInr = 83;
         const newPrices = {
           eth: Math.round(parseFloat(ethData.price) * usdToInr),
           usdt: usdToInr,
         };
 
-        // Cache the new prices
         if (mounted) {
           setPrices(newPrices);
           localStorage.setItem(
@@ -248,10 +239,8 @@ export function useWallet() {
         }
       } catch (error) {
         console.warn("Price fetch error:", error);
-        // Use default prices on error
         const defaultPrices = { eth: 150000, usdt: 83 };
 
-        // Try to use cached prices first if available
         const cached = localStorage.getItem("cached_prices");
         if (cached) {
           const { prices: cachedPrices } = JSON.parse(cached);
@@ -263,7 +252,6 @@ export function useWallet() {
     };
 
     fetchPrices();
-    // Update prices every 10 minutes
     const interval = setInterval(fetchPrices, 10 * 60 * 1000);
 
     return () => {
@@ -272,7 +260,6 @@ export function useWallet() {
     };
   }, []);
 
-  // Add function to check and clear credentials
   const checkNewWalletCredentials = () => {
     const stored = localStorage.getItem("tempWalletCredentials");
     if (stored) {
@@ -288,7 +275,7 @@ export function useWallet() {
     balance,
     prices,
     createWallet,
-    loading, // Return loading state
+    loading,
     checkNewWalletCredentials,
   };
 }

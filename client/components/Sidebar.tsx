@@ -22,7 +22,13 @@ interface SidebarProps {
   userType?: "farmer" | "buyer";
 }
 
-function Sidebar({ className = "", userType }: SidebarProps) {
+interface MenuItem {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  path: string;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const location = useLocation();
 
@@ -33,35 +39,27 @@ function Sidebar({ className = "", userType }: SidebarProps) {
     return null;
   }
 
-  const farmerMenuItems = [
+  const farmerMenuItems: MenuItem[] = [
     { icon: LayoutDashboard, label: "Dashboard", path: "/farmer/dashboard" },
     { icon: Store, label: "My Products", path: "/farmer/products" },
     { icon: Package, label: "Orders", path: "/farmer/orders" },
     { icon: Truck, label: "Shipments", path: "/farmer/shipments" },
     { icon: Wallet, label: "Wallet", path: "/farmer/wallet" },
-    {
-      icon: History,
-      label: "Transaction History",
-      path: "/farmer/transactions",
-    },
+    { icon: History, label: "Transaction History", path: "/farmer/transactions" },
     { icon: BarChart2, label: "Analytics", path: "/farmer/analytics" },
     { icon: MessageSquare, label: "Messages", path: "/farmer/messages" },
     { icon: Bell, label: "Notifications", path: "/farmer/notifications" },
     { icon: Settings, label: "Settings", path: "/farmer/settings" },
   ];
 
-  const buyerMenuItems = [
+  const buyerMenuItems: MenuItem[] = [
     { icon: LayoutDashboard, label: "Dashboard", path: "/buyer/dashboard" },
     { icon: Store, label: "My Products", path: "/buyer/products" },
     { icon: Package, label: "My Orders", path: "/buyer/orders" },
     { icon: FileText, label: "Contracts", path: "/buyer/contracts" },
     { icon: Sprout, label: "Farmers", path: "/buyer/farmers" },
-    { icon: Wallet, label: "Wallet", path: "/wallet/dashboard" },
-    {
-      icon: History,
-      label: "Transaction History",
-      path: "/buyer/transactions",
-    },
+    { icon: Wallet, label: "Wallet", path: "/buyer/wallet" }, // Fixed path to match routes
+    { icon: History, label: "Transaction History", path: "/buyer/transactions" },
     { icon: MessageSquare, label: "Messages", path: "/buyer/messages" },
     { icon: Bell, label: "Notifications", path: "/buyer/notifications" },
     { icon: Settings, label: "Settings", path: "/buyer/settings" },
@@ -70,12 +68,12 @@ function Sidebar({ className = "", userType }: SidebarProps) {
   const menuItems = userType === "farmer" ? farmerMenuItems : buyerMenuItems;
 
   return (
-    <div
+    <aside
       className={`fixed left-0 bg-white shadow-md transition-all duration-300 z-40 ${
         isExpanded ? "w-52" : "w-14"
       } ${className}`}
       style={{
-        top: "56px", // Adjusted to match the navbar height (h-14 = 56px)
+        top: "56px",
         height: "calc(100vh - 56px)",
       }}
       onMouseEnter={() => setIsExpanded(true)}
@@ -108,8 +106,8 @@ function Sidebar({ className = "", userType }: SidebarProps) {
           );
         })}
       </nav>
-    </div>
+    </aside>
   );
-}
+};
 
 export default Sidebar;

@@ -285,3 +285,6 @@ WHERE b.user_id = w.user_id;
 -- Optional: Add a unique constraint to ensure one wallet per buyer
 ALTER TABLE buyers
   ADD CONSTRAINT unique_wallet_per_buyer UNIQUE (wallet_id);
+
+  ALTER TABLE wallets
+ADD CONSTRAINT unique_user_id UNIQUE (user_id);

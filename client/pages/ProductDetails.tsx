@@ -45,6 +45,7 @@ interface ProductDetails {
     phone: string;
     email: string;
     wallet_address: string;
+    user_id?: string; // Optional, depending on your schema
   } | null;
   buyer?: {
     id: string;
@@ -53,6 +54,7 @@ interface ProductDetails {
     business_address: string;
     business_type: string;
     storage_capacity: number;
+    user_id?: string; // Optional, depending on your schema
   } | null;
 }
 
@@ -112,8 +114,10 @@ function ProductDetails() {
   const [error, setError] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
   const [productImgError, setProductImgError] = useState(false);
   const [profileImgError, setProfileImgError] = useState(false);
+  const [isOwnListing, setIsOwnListing] = useState(false);
 
   const fetchProduct = async () => {
     try {
@@ -136,15 +140,92 @@ function ProductDetails() {
         .eq("id", id)
         .single();
 
-      if (fetchError) throw fetchError;
+      if (fetchError) {
+        console.error("Fetch error:", fetchError); // Log the error for debugging
+        throw fetchError;
+      }
       if (!data) throw new Error("Product not found");
 
       setProduct(data);
+
+      // Check if this is the user's own listing (assuming user_id exists)
+      if (user) {
+        const isOwnSell = data.type === "sell" && data.farmer?.user_id === user.id;
+        const isOwnBuy = data.type === "buy" && data.buyer?.user_id === user.id;
+        setIsOwnListing(isOwnSell || isOwnBuy);
+      }
     } catch (err) {
-      console.error("Error fetching product:", err);
       setError(err instanceof Error ? err.message : "Failed to load product");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const initiateChat = async () => {
+    if (!currentUserId || !product || isOwnListing) {
+      return;
+    }
+
+    try {
+      const { data: farmer, error: farmerError } = await supabase
+        .from("farmers")
+        .select("id")
+        .eq("user_id", currentUserId)
+        .single();
+
+      if (farmerError && farmerError.code !== "PGRST116") {
+        throw new Error(`Failed to fetch farmer: ${farmerError.message}`);
+      }
+
+      const { data: buyer, error: buyerError } = await supabase
+        .from("buyers")
+        .select("id")
+        .eq("user_id", currentUserId)
+        .single();
+
+      if (buyerError && buyerError.code !== "PGRST116") {
+        throw new Error(`Failed to fetch buyer: ${buyerError.message}`);
+      }
+
+      const chatData = {
+        farmer_id: product.type === "sell" ? product.farmer?.id ?? null : farmer?.id ?? null,
+        buyer_id: product.type === "buy" ? product.buyer?.id ?? null : buyer?.id ?? null,
+        product_id: id,
+      };
+
+      const { data: existingChats, error: existingChatError } = await supabase
+        .from("chats")
+        .select("id")
+        .eq("product_id", id)
+        .eq("farmer_id", chatData.farmer_id)
+        .eq("buyer_id", chatData.buyer_id)
+        .limit(1);
+
+      if (existingChats && existingChats.length > 0) {
+        const existingChat = existingChats[0];
+        setChatId(existingChat.id);
+        setShowChat(true);
+        return;
+      }
+
+      if (existingChatError) {
+        throw new Error(`Failed to check existing chat: ${existingChatError.message}`);
+      }
+
+      const { data: newChat, error: chatError } = await supabase
+        .from("chats")
+        .insert(chatData)
+        .select("id, farmer_id, buyer_id, product_id")
+        .single();
+
+      if (chatError) {
+        throw new Error(`Failed to create chat: ${chatError.message}`);
+      }
+
+      setChatId(newChat?.id);
+      setShowChat(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to initiate chat. Please try again.");
     }
   };
 
@@ -154,12 +235,10 @@ function ProductDetails() {
 
   const handleProductImageError = () => {
     setProductImgError(true);
-    console.error("Failed to load product image:", product?.image_url);
   };
 
   const handleProfileImageError = () => {
     setProfileImgError(true);
-    console.error("Failed to load profile image:", product?.farmer?.profile_photo_url || product?.buyer?.profile_photo_url);
   };
 
   if (loading) {
@@ -221,7 +300,7 @@ function ProductDetails() {
       <style>{customStyles}</style>
       <div className="container mx-auto px-4 py-6 max-w-7xl animate-fade-in">
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate("/marketplace")}
           className="button-transition inline-flex items-center mb-6 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 
             bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow transition-all duration-200 
             transform hover:scale-[1.02]"
@@ -231,7 +310,6 @@ function ProductDetails() {
         </button>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Product Image and Seller Info */}
           <div
             className="lg:col-span-1 bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
               transition-all duration-300 transform hover:scale-[1.01] overflow-hidden"
@@ -292,7 +370,6 @@ function ProductDetails() {
                 </div>
               </div>
 
-              {/* Seller Details Section */}
               {product.type === "sell" && product.farmer ? (
                 <div className="border-t border-gray-100 pt-4 space-y-3">
                   <div className="space-y-1">
@@ -345,7 +422,6 @@ function ProductDetails() {
             </div>
           </div>
 
-          {/* Right Column - Product Details */}
           <div className="lg:col-span-2 space-y-6">
             <div
               className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
@@ -366,9 +442,9 @@ function ProductDetails() {
                     </span>
                   </div>
                   <button
-                    onClick={() => setShowChat(true)}
-                    className="button-transition flex items-center space-x-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 hover:text-gray-900 transition-all duration-300 transform hover:scale-105"
-                    disabled={!seller || !currentUserId}
+                    onClick={initiateChat}
+                    className="button-transition flex items-center space-x-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 hover:text-gray-900 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!seller || !currentUserId || isOwnListing}
                   >
                     <MessageSquare className="h-4 w-4" />
                     <span>Message {product.type === "sell" ? "Farmer" : "Buyer"}</span>
@@ -399,7 +475,6 @@ function ProductDetails() {
               </div>
             </div>
 
-            {/* Specifications and Requirements */}
             <div
               className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
                 transition-all duration-300 transform hover:scale-[1.01] p-6"
@@ -465,7 +540,6 @@ function ProductDetails() {
               </div>
             </div>
 
-            {/* Submit Offer Button */}
             <div
               className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg 
                 transition-all duration-300 p-6"
@@ -474,7 +548,8 @@ function ProductDetails() {
                 className="button-transition w-full flex items-center justify-center px-6 py-3 bg-emerald-600 
                   text-white rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all 
                   duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-md 
-                  hover:shadow-xl font-medium"
+                  hover:shadow-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isOwnListing}
               >
                 Submit Offer
               </button>
@@ -483,15 +558,15 @@ function ProductDetails() {
         </div>
       </div>
 
-      {/* Chat Window */}
-      {showChat && seller && currentUserId && (
+      {showChat && seller && currentUserId && chatId && (
         <ChatWindow
-          chatId={`${currentUserId}-${seller.id}`}
+          chatId={chatId}
           currentUserId={currentUserId}
           otherUser={{
             name: sellerName,
             image: seller.profile_photo_url || "",
           }}
+          productId={id}
           onClose={() => setShowChat(false)}
         />
       )}

@@ -353,3 +353,115 @@ CREATE POLICY "Anyone can view product images" ON storage.objects FOR SELECT TO 
 CREATE POLICY "Authenticated users can upload product images" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'product-images');
 CREATE POLICY "Users can update own product images" ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'product-images' AND auth.uid()::text = (storage.foldername(name))[1]);
 CREATE POLICY "Users can delete own product images" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'product-images' AND auth.uid()::text = (storage.foldername(name))[1]);
+
+
+CREATE TABLE IF NOT EXISTS chats (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  farmer_id uuid REFERENCES farmers(id) NOT NULL,
+  buyer_id uuid REFERENCES buyers(id) NOT NULL,
+  product_id uuid REFERENCES products(id) NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  CONSTRAINT unique_chat_participants UNIQUE (farmer_id, buyer_id, product_id),
+  CONSTRAINT check_participants CHECK (
+    farmer_id != buyer_id
+  )
+);
+
+-- Enable RLS
+ALTER TABLE chats ENABLE ROW LEVEL SECURITY;
+
+
+CREATE TABLE IF NOT EXISTS messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  chat_id uuid REFERENCES chats(id) ON DELETE CASCADE NOT NULL,
+  sender_id uuid REFERENCES auth.users(id) NOT NULL,
+  content text NOT NULL,
+  product_id uuid REFERENCES products(id),
+  created_at timestamptz DEFAULT now(),
+  read_at timestamptz
+);
+
+-- Enable RLS
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+
+
+CREATE OR REPLACE FUNCTION update_chats_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_chats_timestamp
+  BEFORE UPDATE ON chats
+  FOR EACH ROW
+  EXECUTE FUNCTION update_chats_timestamp();
+
+  -- Farmers and buyers can view chats they are part of
+CREATE POLICY "Participants can view chats" ON chats
+  FOR SELECT
+  TO authenticated
+  USING (
+    farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+    buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+  );
+
+-- Farmers and buyers can create chats they are part of
+CREATE POLICY "Participants can create chats" ON chats
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+    buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+  );
+
+-- Farmers and buyers can update their chats
+CREATE POLICY "Participants can update chats" ON chats
+  FOR UPDATE
+  TO authenticated
+  USING (
+    farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+    buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+  );
+
+
+  -- Participants can view messages in their chats
+CREATE POLICY "Participants can view messages" ON messages
+  FOR SELECT
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM chats
+      WHERE chats.id = messages.chat_id
+      AND (
+        chats.farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+        chats.buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+      )
+    )
+  );
+
+-- Participants can send messages in their chats
+CREATE POLICY "Participants can send messages" ON messages
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM chats
+      WHERE chats.id = messages.chat_id
+      AND (
+        chats.farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+        chats.buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+      )
+      AND messages.sender_id = auth.uid()
+    )
+  );
+
+-- Users can update their own messages (e.g., mark as read)
+CREATE POLICY "Users can update own messages" ON messages
+  FOR UPDATE
+  TO authenticated
+  USING (sender_id = auth.uid());
+
+  
