@@ -7,11 +7,12 @@ interface StatsCardProps {
   change?: string;
   trend?: 'up' | 'down';
   icon: typeof LucideIcon;
+  className?: string;
 }
 
-function StatsCard({ title, value, change, trend, icon: Icon }: StatsCardProps) {
+function StatsCard({ title, value, change, trend, icon: Icon, className }: StatsCardProps) {
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className={`bg-white rounded-lg shadow p-6 ${className || ''}`}>
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-500">{title}</p>

@@ -1,9 +1,17 @@
 import React from 'react';
-import { BarChart2, TrendingUp, Users, ShoppingBag } from 'lucide-react';
+import { BarChart2, TrendingUp, Users, ShoppingBag, LucideIcon } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import StatsCard from '../components/StatsCard';
 
-const mockStats = [
+type Stat = {
+  title: string;
+  value: string;
+  change: string;
+  trend: 'up' | 'down';
+  icon: LucideIcon;
+};
+
+const mockStats: Stat[] = [
   {
     title: 'Total Users',
     value: '2,345',
