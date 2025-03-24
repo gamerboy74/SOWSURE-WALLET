@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Loader2, AlertCircle } from 'lucide-react';
+import { Save, Loader2, AlertCircle, Upload } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface SiteSettings {
@@ -22,75 +22,191 @@ interface SiteSettings {
   max_withdrawal: number;
 }
 
-function Settings() {
-  const [settings, setSettings] = useState<SiteSettings>({
-    site_name: 'FarmConnect',
-    support_email: 'support@farmconnect.com',
-    max_file_size: 10,
-    allow_registration: true,
-    require_email_verification: false,
-    maintenance_mode: false,
-    contact_phone: '+91 123 456 7890',
-    contact_address: '123 Agriculture Road, Farming District, New Delhi, 110001',
-    social_links: {
-      facebook: 'https://facebook.com/farmconnect',
-      twitter: 'https://twitter.com/farmconnect',
-      instagram: 'https://instagram.com/farmconnect',
-      linkedin: 'https://linkedin.com/company/farmconnect'
-    },
-    commission_rate: 2.5,
-    min_withdrawal: 1000,
-    max_withdrawal: 100000
-  });
+interface PlatformStats {
+  active_listings: number;
+  registered_farmers: number;
+  daily_transactions: number;
+  verified_buyers: number;
+}
 
+function Settings() {
+  const [settings, setSettings] = useState<SiteSettings | null>(null);
+  const [platformStats, setPlatformStats] = useState<PlatformStats | null>(null);
+  const [adminProfile, setAdminProfile] = useState<{ profile_photo_url?: string } | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    loadAdminProfile();
+    loadPlatformStats();
   }, []);
 
   const loadSettings = async () => {
     try {
+      setLoading(true);
       const { data, error } = await supabase
         .from('site_settings')
         .select('*')
         .single();
 
-      if (error) throw error;
+      if (error && error.code !== 'PGRST116') throw error;
       if (data) {
         setSettings(data);
+      } else {
+        setSettings({
+          site_name: '',
+          support_email: '',
+          max_file_size: 0,
+          allow_registration: false,
+          require_email_verification: false,
+          maintenance_mode: false,
+          contact_phone: '',
+          contact_address: '',
+          social_links: { facebook: '', twitter: '', instagram: '', linkedin: '' },
+          commission_rate: 0,
+          min_withdrawal: 0,
+          max_withdrawal: 0,
+        });
       }
     } catch (err) {
       console.error('Error loading settings:', err);
-      // Don't show error on initial load if settings don't exist yet
+      setError('Failed to load settings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadAdminProfile = async () => {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData.user?.id;
+      if (!userId) throw new Error('User not authenticated');
+
+      const { data, error } = await supabase
+        .from('admin_users')
+        .select('profile_photo_url')
+        .eq('user_id', userId)
+        .single();
+
+      if (error) throw error;
+      setAdminProfile(data || { profile_photo_url: '' });
+    } catch (err) {
+      console.error('Error loading admin profile:', err);
+      setError('Failed to load admin profile');
+    }
+  };
+
+  const loadPlatformStats = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('platform_stats')
+        .select('*')
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      if (data) {
+        setPlatformStats(data);
+      } else {
+        setPlatformStats({
+          active_listings: 0,
+          registered_farmers: 0,
+          daily_transactions: 0,
+          verified_buyers: 0,
+        });
+      }
+    } catch (err) {
+      console.error('Error loading platform stats:', err);
+      setError('Failed to load platform stats');
+    }
+  };
+
+  const handlePhotoUpload = async () => {
+    if (!photoFile) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData.user;
+      if (!user) throw new Error('User not authenticated');
+
+      const fileExt = photoFile.name.split('.').pop();
+      const fileName = `${user.id}/profile.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('admin-profile-photos')
+        .upload(fileName, photoFile, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from('admin-profile-photos')
+        .getPublicUrl(fileName);
+
+      const publicUrl = `${urlData.publicUrl}?t=${new Date().getTime()}`;
+
+      const { error: updateError } = await supabase
+        .from('admin_users')
+        .update({ profile_photo_url: publicUrl })
+        .eq('user_id', user.id);
+
+      if (updateError) throw updateError;
+
+      setAdminProfile({ profile_photo_url: publicUrl });
+      setPhotoFile(null);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+      await loadAdminProfile();
+    } catch (err) {
+      console.error('Error uploading photo:', err);
+      setError(err instanceof Error ? err.message : 'Failed to upload photo');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!settings || !platformStats) return;
+
     setLoading(true);
     setError(null);
     setSuccess(false);
 
     try {
-      const { error } = await supabase
+      const { error: settingsError } = await supabase
         .from('site_settings')
-        .upsert([settings], {
-          onConflict: 'id'
-        });
+        .upsert([settings], { onConflict: 'id' });
 
-      if (error) throw error;
+      if (settingsError) throw settingsError;
+
+      const { error: statsError } = await supabase
+        .from('platform_stats')
+        .upsert([{ id: 1, ...platformStats }], { onConflict: 'id' });
+
+      if (statsError) throw statsError;
+
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      console.error('Error saving settings:', err);
-      setError(err instanceof Error ? err.message : 'Failed to save settings');
+      console.error('Error saving settings or stats:', err);
+      setError(err instanceof Error ? err.message : 'Failed to save settings or stats');
     } finally {
       setLoading(false);
     }
   };
+
+  if (!settings || !adminProfile || !platformStats) {
+    return (
+      <div className="p-6 flex justify-center items-center">
+        <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -105,20 +221,60 @@ function Settings() {
 
       {success && (
         <div className="mb-6 bg-green-50 text-green-600 p-4 rounded-lg">
-          Settings saved successfully!
+          Settings and stats saved successfully!
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl">
+        {/* Admin Profile Photo */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Admin Profile</h2>
+          <div className="flex items-center space-x-4">
+            {adminProfile.profile_photo_url ? (
+              <img
+                src={adminProfile.profile_photo_url}
+                alt="Admin Profile"
+                className="w-24 h-24 rounded-full object-cover"
+                onError={(e) => (e.currentTarget.src = '/fallback-image.png')}
+              />
+            ) : (
+              <div className="w-24 h-24 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
+                No Photo
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Profile Photo</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setPhotoFile(e.target.files?.[0] || null)}
+                className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+              />
+              {photoFile && (
+                <button
+                  type="button"
+                  onClick={handlePhotoUpload}
+                  disabled={loading}
+                  className="mt-2 flex items-center px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4 mr-2" />
+                  )}
+                  Upload Photo
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* General Settings */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">General Settings</h2>
-          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Site Name
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Site Name</label>
               <input
                 type="text"
                 value={settings.site_name}
@@ -126,11 +282,8 @@ function Settings() {
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Support Email
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Support Email</label>
               <input
                 type="email"
                 value={settings.support_email}
@@ -138,11 +291,8 @@ function Settings() {
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Contact Phone
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Contact Phone</label>
               <input
                 type="text"
                 value={settings.contact_phone}
@@ -150,24 +300,18 @@ function Settings() {
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Maximum File Size (MB)
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Maximum File Size (MB)</label>
               <input
                 type="number"
                 value={settings.max_file_size}
-                onChange={(e) => setSettings({ ...settings, max_file_size: parseInt(e.target.value) })}
+                onChange={(e) => setSettings({ ...settings, max_file_size: parseInt(e.target.value) || 0 })}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
           </div>
-
           <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700">
-              Contact Address
-            </label>
+            <label className="block text-sm font-medium text-gray-700">Contact Address</label>
             <textarea
               value={settings.contact_address}
               onChange={(e) => setSettings({ ...settings, contact_address: e.target.value })}
@@ -180,64 +324,60 @@ function Settings() {
         {/* Social Links */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Social Media Links</h2>
-          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Facebook URL
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Facebook URL</label>
               <input
                 type="url"
                 value={settings.social_links.facebook}
-                onChange={(e) => setSettings({
-                  ...settings,
-                  social_links: { ...settings.social_links, facebook: e.target.value }
-                })}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    social_links: { ...settings.social_links, facebook: e.target.value },
+                  })
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Twitter URL
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Twitter URL</label>
               <input
                 type="url"
                 value={settings.social_links.twitter}
-                onChange={(e) => setSettings({
-                  ...settings,
-                  social_links: { ...settings.social_links, twitter: e.target.value }
-                })}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    social_links: { ...settings.social_links, twitter: e.target.value },
+                  })
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Instagram URL
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Instagram URL</label>
               <input
                 type="url"
                 value={settings.social_links.instagram}
-                onChange={(e) => setSettings({
-                  ...settings,
-                  social_links: { ...settings.social_links, instagram: e.target.value }
-                })}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    social_links: { ...settings.social_links, instagram: e.target.value },
+                  })
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                LinkedIn URL
-              </label>
+              <label className="block text-sm font-medium text-gray-700">LinkedIn URL</label>
               <input
                 type="url"
                 value={settings.social_links.linkedin}
-                onChange={(e) => setSettings({
-                  ...settings,
-                  social_links: { ...settings.social_links, linkedin: e.target.value }
-                })}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    social_links: { ...settings.social_links, linkedin: e.target.value },
+                  })
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
@@ -247,45 +387,36 @@ function Settings() {
         {/* Financial Settings */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Financial Settings</h2>
-          
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Commission Rate (%)
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Commission Rate (%)</label>
               <input
                 type="number"
                 step="0.1"
                 min="0"
                 max="100"
                 value={settings.commission_rate}
-                onChange={(e) => setSettings({ ...settings, commission_rate: parseFloat(e.target.value) })}
+                onChange={(e) => setSettings({ ...settings, commission_rate: parseFloat(e.target.value) || 0 })}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Minimum Withdrawal (₹)
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Minimum Withdrawal (₹)</label>
               <input
                 type="number"
                 min="0"
                 value={settings.min_withdrawal}
-                onChange={(e) => setSettings({ ...settings, min_withdrawal: parseInt(e.target.value) })}
+                onChange={(e) => setSettings({ ...settings, min_withdrawal: parseInt(e.target.value) || 0 })}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Maximum Withdrawal (₹)
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Maximum Withdrawal (₹)</label>
               <input
                 type="number"
                 min="0"
                 value={settings.max_withdrawal}
-                onChange={(e) => setSettings({ ...settings, max_withdrawal: parseInt(e.target.value) })}
+                onChange={(e) => setSettings({ ...settings, max_withdrawal: parseInt(e.target.value) || 0 })}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
               />
             </div>
@@ -295,7 +426,6 @@ function Settings() {
         {/* System Settings */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">System Settings</h2>
-          
           <div className="space-y-4">
             <div className="flex items-center">
               <input
@@ -309,7 +439,6 @@ function Settings() {
                 Allow New Registrations
               </label>
             </div>
-
             <div className="flex items-center">
               <input
                 type="checkbox"
@@ -322,7 +451,6 @@ function Settings() {
                 Require Email Verification
               </label>
             </div>
-
             <div className="flex items-center">
               <input
                 type="checkbox"
@@ -334,6 +462,62 @@ function Settings() {
               <label htmlFor="maintenanceMode" className="ml-2 block text-sm text-gray-900">
                 Maintenance Mode
               </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Platform Stats */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Platform Statistics</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Active Listings</label>
+              <input
+                type="number"
+                min="0"
+                value={platformStats.active_listings}
+                onChange={(e) =>
+                  setPlatformStats({ ...platformStats, active_listings: parseInt(e.target.value) || 0 })
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Registered Farmers</label>
+              <input
+                type="number"
+                min="0"
+                value={platformStats.registered_farmers}
+                onChange={(e) =>
+                  setPlatformStats({ ...platformStats, registered_farmers: parseInt(e.target.value) || 0 })
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Daily Transactions (₹)</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={platformStats.daily_transactions}
+                onChange={(e) =>
+                  setPlatformStats({ ...platformStats, daily_transactions: parseFloat(e.target.value) || 0 })
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Verified Buyers</label>
+              <input
+                type="number"
+                min="0"
+                value={platformStats.verified_buyers}
+                onChange={(e) =>
+                  setPlatformStats({ ...platformStats, verified_buyers: parseInt(e.target.value) || 0 })
+                }
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
+              />
             </div>
           </div>
         </div>

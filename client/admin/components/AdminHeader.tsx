@@ -1,11 +1,41 @@
-import React, { useState } from 'react';
-import { Bell, Search, User, LogOut } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Bell, Search, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 
 function AdminHeader() {
   const navigate = useNavigate();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [adminProfile, setAdminProfile] = useState<{ profile_photo_url?: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch admin profile data on component mount
+  useEffect(() => {
+    const loadAdminProfile = async () => {
+      try {
+        setLoading(true);
+        const { data: userData } = await supabase.auth.getUser();
+        const userId = userData.user?.id;
+        if (!userId) throw new Error('User not authenticated');
+
+        const { data, error } = await supabase
+          .from('admin_users')
+          .select('profile_photo_url')
+          .eq('user_id', userId)
+          .single();
+
+        if (error) throw error;
+        setAdminProfile(data || { profile_photo_url: '' });
+      } catch (err) {
+        console.error('Error loading admin profile:', err);
+        setAdminProfile({ profile_photo_url: '' }); // Fallback to empty state
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAdminProfile();
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -37,9 +67,25 @@ function AdminHeader() {
               onClick={() => setShowProfileMenu(!showProfileMenu)}
               className="flex items-center space-x-2"
             >
-              <div className="h-8 w-8 bg-emerald-100 rounded-full flex items-center justify-center">
-                <User className="h-5 w-5 text-emerald-600" />
-              </div>
+              {loading ? (
+                <div className="h-8 w-8 bg-gray-200 rounded-full animate-pulse" />
+              ) : adminProfile?.profile_photo_url ? (
+                <img
+                  src={adminProfile.profile_photo_url}
+                  alt="Admin Profile"
+                  className="h-8 w-8 rounded-full object-cover"
+                  onError={(e) => {
+                    console.error('Image load error:', e);
+                    e.currentTarget.src = '/fallback-image.png'; // Optional fallback image
+                  }}
+                />
+              ) : (
+                <div className="h-8 w-8 bg-emerald-100 rounded-full flex items-center justify-center">
+                  <span className="text-emerald-600 font-medium">
+                    {adminProfile ? 'AU' : '?'}
+                  </span>
+                </div>
+              )}
               <span className="text-sm font-medium text-gray-700">Admin User</span>
             </button>
 

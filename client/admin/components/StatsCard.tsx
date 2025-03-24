@@ -6,7 +6,7 @@ interface StatsCardProps {
   value: string | number;
   change?: string;
   trend?: 'up' | 'down';
-  icon: LucideIcon;
+  icon: typeof LucideIcon;
 }
 
 function StatsCard({ title, value, change, trend, icon: Icon }: StatsCardProps) {

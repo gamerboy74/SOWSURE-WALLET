@@ -15,6 +15,8 @@ import {
   Store,
   Users,
   Bell,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -58,27 +60,45 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
     { icon: Package, label: "My Orders", path: "/buyer/orders" },
     { icon: FileText, label: "Contracts", path: "/buyer/contracts" },
     { icon: Sprout, label: "Farmers", path: "/buyer/farmers" },
-    { icon: Wallet, label: "Wallet", path: "/buyer/wallet" }, // Fixed path to match routes
+    { icon: Wallet, label: "Wallet", path: "/buyer/wallet" },
     { icon: History, label: "Transaction History", path: "/buyer/transactions" },
-    { icon: MessageSquare, label: "Messages", path: "/buyer/messages" },
-    { icon: Bell, label: "Notifications", path: "/buyer/notifications" },
-    { icon: Settings, label: "Settings", path: "/buyer/settings" },
+    { icon: MessageSquare, label: "Messages", path: "/farmer/messages" },
+    { icon: Bell, label: "Notifications", path: "/farmer/notifications" },
+    { icon: Settings, label: "Settings", path: "/farmer/settings" },
   ];
 
   const menuItems = userType === "farmer" ? farmerMenuItems : buyerMenuItems;
 
   return (
     <aside
-      className={`fixed left-0 bg-white shadow-md transition-all duration-300 z-40 ${
-        isExpanded ? "w-52" : "w-14"
-      } ${className}`}
+      className={`fixed left-0 bg-white shadow-md transition-all duration-300 z-50 ${
+        isExpanded ? "w-52" : "w-12"
+      } ${className} md:hover:w-52`} // Hover behavior on md and above
       style={{
-        top: "56px",
-        height: "calc(100vh - 56px)",
+        top: "64px",
+        height: "calc(100vh - 64px)",
       }}
-      onMouseEnter={() => setIsExpanded(true)}
-      onMouseLeave={() => setIsExpanded(false)}
+      onMouseEnter={(e) => {
+        if (window.innerWidth >= 768) setIsExpanded(true); // Hover only on md and above
+      }}
+      onMouseLeave={(e) => {
+        if (window.innerWidth >= 768) setIsExpanded(false); // Hover only on md and above
+      }}
     >
+      {/* Toggle button visible only on small screens */}
+      <div className="flex justify-end p-2 md:hidden">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="text-gray-600 hover:text-emerald-600 p-1 rounded-full hover:bg-gray-100"
+          aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
+        >
+          {isExpanded ? (
+            <ChevronLeft className="h-5 w-5" />
+          ) : (
+            <ChevronRight className="h-5 w-5" />
+          )}
+        </button>
+      </div>
       <nav className="mt-2">
         {menuItems.map((item) => {
           const Icon = item.icon;
@@ -98,7 +118,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
               <span
                 className={`ml-3 text-sm whitespace-nowrap overflow-hidden transition-all duration-300 ${
                   isExpanded ? "opacity-100 w-auto" : "opacity-0 w-0"
-                }`}
+                } md:opacity-100 md:w-auto`} // Always show labels on hover for md and above
               >
                 {item.label}
               </span>

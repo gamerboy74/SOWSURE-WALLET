@@ -306,3 +306,5 @@ ALTER TABLE buyers
 
 ALTER TABLE wallets
   ADD CONSTRAINT unique_user_id UNIQUE (user_id);
+
+ ALTER TABLE wallets ADD COLUMN token_type TEXT;

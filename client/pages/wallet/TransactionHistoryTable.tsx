@@ -1,4 +1,3 @@
-// components/wallet/TransactionHistoryTable.tsx
 import React, { useState, useMemo } from "react";
 import { RefreshCw, Search, ExternalLink } from "lucide-react";
 import type { WalletTransaction } from "../../types/types";
@@ -15,7 +14,7 @@ export const TransactionHistoryTable = React.memo(
     const transactionsPerPage = 10;
 
     const filteredTransactions = useMemo(() => {
-      const filtered = transactions.filter(
+      return transactions.filter(
         (tx) =>
           !tx.metadata?.note?.includes("Funding Request") &&
           !tx.metadata?.note?.includes("Adding Funds") &&
@@ -24,17 +23,11 @@ export const TransactionHistoryTable = React.memo(
             tx.status.toLowerCase().includes(searchQuery.toLowerCase()) ||
             (tx.token_type || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
             Object.values(tx.metadata || {}).some((value) =>
-              String(value || "")
-                .toLowerCase()
-                .includes(searchQuery.toLowerCase())
+              String(value || "").toLowerCase().includes(searchQuery.toLowerCase())
             ))
       );
-      console.log("Filtered transactions length:", filtered.length);
-      console.log("Filtered transactions:", filtered);
-      return filtered;
     }, [transactions, searchQuery]);
 
-    // Calculate pagination values
     const totalPages = Math.ceil(filteredTransactions.length / transactionsPerPage);
     const startIndex = (currentPage - 1) * transactionsPerPage;
     const paginatedTransactions = filteredTransactions.slice(
@@ -42,84 +35,75 @@ export const TransactionHistoryTable = React.memo(
       startIndex + transactionsPerPage
     );
 
-    console.log("Total pages:", totalPages);
-    console.log("Current page:", currentPage);
-    console.log("Start index:", startIndex);
-    console.log("Paginated transactions length:", paginatedTransactions.length);
+    const handlePageChange = (page: number) => setCurrentPage(page);
 
-    const handlePageChange = (page: number) => {
-      console.log("Changing to page:", page);
-      setCurrentPage(page);
-    };
-
-    // Helper to display token type
-    const getDisplayTokenType = (tx: WalletTransaction) => {
-      return tx.token_type || "Unknown"; // No default to "USDT"; neutral fallback
-    };
+    const getDisplayTokenType = (tx: WalletTransaction) => tx.token_type || "Unknown";
 
     return (
-      <div className="glass-card rounded-2xl p-6">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">
+      <div className="p-4 sm:p-6 hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-750 transition-all duration-300 rounded-2xl">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-3">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
             Recent Transactions
           </h3>
-          <div className="flex items-center space-x-3">
-            <div className="relative">
-              <Search className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500" />
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+            <div className="relative w-full sm:w-64">
+              <Search className="h-4 sm:h-5 w-4 sm:w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search transactions..."
-                className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white/50 dark:bg-gray-700/50 text-gray-800 dark:text-gray-200 input-focus"
+                className="w-full pl-10 pr-4 py-2 rounded-xl bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm hover:shadow-md hover:scale-[1.01] transition-all duration-200 text-sm"
               />
             </div>
             <button
               onClick={onRefresh}
-              className="p-2 text-gray-600 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors duration-200"
+              className="p-2 text-gray-600 dark:text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 hover:scale-110 transition-all duration-300"
             >
               <RefreshCw className="w-5 h-5 animate-spin-on-hover" />
             </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
+        <div className="w-full">
+          <table className="w-full text-xs sm:text-sm">
             <thead>
-              <tr className="text-left border-b dark:border-gray-700">
-                <th className="px-4 py-2">Type</th>
-                <th className="px-4 py-2">Token</th>
-                <th className="px-4 py-2">Amount</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Date</th>
-                <th className="px-4 py-2">Tx Hash</th>
+              <tr className="text-left border-b border-gray-200 dark:border-gray-700">
+                <th className="px-2 sm:px-4 py-2 font-semibold text-gray-600 dark:text-gray-400">Type</th>
+                <th className="px-2 sm:px-4 py-2 font-semibold text-gray-600 dark:text-gray-400">Token</th>
+                <th className="px-2 sm:px-4 py-2 font-semibold text-gray-600 dark:text-gray-400">Amount</th>
+                <th className="px-2 sm:px-4 py-2 font-semibold text-gray-600 dark:text-gray-400">Status</th>
+                <th className="px-2 sm:px-4 py-2 font-semibold text-gray-600 dark:text-gray-400">Date</th>
               </tr>
             </thead>
             <tbody>
               {paginatedTransactions.map((tx) => (
-                <tr key={tx.id} className="border-b last:border-0 table-row-hover dark:border-gray-600">
-                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300 font-medium">
+                <tr
+                  key={tx.id}
+                  className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750 hover:scale-[1.005] hover:shadow-sm transition-all duration-200"
+                >
+                  <td className="px-2 sm:px-4 py-3 text-gray-700 dark:text-gray-300 font-medium whitespace-normal break-words">
                     {tx.type}
                   </td>
-                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
+                  <td className="px-2 sm:px-4 py-3 text-gray-700 dark:text-gray-300 whitespace-normal break-words">
                     {getDisplayTokenType(tx)}
                   </td>
                   <td
-                    className={`px-4 py-3 font-medium ${
+                    className={`px-2 sm:px-4 py-3 font-medium whitespace-normal break-words ${
                       tx.type === "DEPOSIT"
-                        ? "text-emerald-600 dark:text-emerald-400"
+                        ? "text-green-600 dark:text-green-400"
                         : "text-red-600 dark:text-red-400"
                     }`}
                   >
                     {tx.type === "DEPOSIT" ? "+" : "-"}
                     {tx.amount.toFixed(4)} {getDisplayTokenType(tx)}
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center space-x-2">
+                  <td className="px-2 sm:px-4 py-3 whitespace-normal break-words">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                       <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        className={`px-2 sm:px-3 py-1 rounded-full text-xs font-medium hover:scale-105 transition-all duration-200 ${
                           tx.status === "COMPLETED"
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-200"
+                            ? "bg-green-100 text-green-700 dark:bg-green-800 dark:text-green-200"
                             : tx.status === "PENDING"
                             ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-800 dark:text-yellow-200"
                             : "bg-red-100 text-red-700 dark:bg-red-800 dark:text-red-200"
@@ -132,22 +116,22 @@ export const TransactionHistoryTable = React.memo(
                           href={`https://sepolia.etherscan.io/tx/${tx.metadata.txHash}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 flex items-center transition-colors duration-200"
+                          className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 hover:scale-110 flex items-center transition-all duration-200 break-words"
                         >
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          View
+                          <ExternalLink className="h-4 w-4 mr-1 flex-shrink-0" />
+                          {tx.metadata.txHash.slice(0, 6)}...{tx.metadata.txHash.slice(-6)}
                         </a>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
+                  <td className="px-2 sm:px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-normal break-words">
                     {new Date(tx.created_at).toLocaleString()}
                   </td>
                 </tr>
               ))}
               {paginatedTransactions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-4 text-center text-gray-500 dark:text-gray-400">
+                  <td colSpan={6} className="px-2 sm:px-4 py-4 text-center text-gray-500 dark:text-gray-400">
                     No transactions found
                   </td>
                 </tr>
@@ -157,17 +141,17 @@ export const TransactionHistoryTable = React.memo(
         </div>
 
         {filteredTransactions.length > 0 && (
-          <div className="mt-4 flex justify-between items-center">
-            <div className="text-sm text-gray-600 dark:text-gray-400">
+          <div className="mt-4 flex flex-col sm:flex-row justify-between items-center gap-3">
+            <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
               Showing {startIndex + 1} -{" "}
               {Math.min(startIndex + transactionsPerPage, filteredTransactions.length)} of{" "}
               {filteredTransactions.length} transactions
             </div>
-            <div className="flex space-x-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => handlePageChange(currentPage - 1)}
                 disabled={currentPage === 1}
-                className="px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300 dark:hover:bg-gray-600 hover:scale-105 transition-all duration-300"
               >
                 Previous
               </button>
@@ -175,11 +159,11 @@ export const TransactionHistoryTable = React.memo(
                 <button
                   key={page}
                   onClick={() => handlePageChange(page)}
-                  className={`px-3 py-1 rounded-lg ${
+                  className={`px-3 py-1 rounded-xl ${
                     currentPage === page
-                      ? "bg-emerald-600 text-white"
-                      : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-                  }`}
+                      ? "bg-indigo-500 text-white"
+                      : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 hover:scale-105"
+                  } transition-all duration-300`}
                 >
                   {page}
                 </button>
@@ -187,7 +171,7 @@ export const TransactionHistoryTable = React.memo(
               <button
                 onClick={() => handlePageChange(currentPage + 1)}
                 disabled={currentPage === totalPages}
-                className="px-3 py-1 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300 dark:hover:bg-gray-600 hover:scale-105 transition-all duration-300"
               >
                 Next
               </button>

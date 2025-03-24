@@ -19,7 +19,11 @@ function AdminLogin() {
     setError(null);
 
     try {
-      // First, attempt to sign in
+      // Sign out any existing user first
+      await supabase.auth.signOut();
+      console.log('Signed out previous user'); // Debug log
+
+      // Then attempt to sign in as admin
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
@@ -28,7 +32,6 @@ function AdminLogin() {
       if (authError) throw authError;
       if (!authData.user) throw new Error('No user data returned');
 
-      // Then verify if the user is an admin
       const { data: adminData, error: adminError } = await supabase
         .from('admin_users')
         .select('*')
@@ -36,12 +39,11 @@ function AdminLogin() {
         .single();
 
       if (adminError || !adminData) {
-        // If not an admin, sign out and show error
         await supabase.auth.signOut();
         throw new Error('Invalid admin credentials');
       }
 
-      // If we get here, the user is an admin
+      console.log('Admin login successful:', authData.user); // Debug log
       navigate('/admin');
     } catch (error) {
       console.error('Login error:', error);

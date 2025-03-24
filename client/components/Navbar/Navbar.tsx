@@ -61,7 +61,8 @@ const Navbar: React.FC<NavbarProps> = React.memo(({ isAuthenticated = false }) =
 
   return (
     <nav className="sticky top-0 z-50 w-full bg-white/90 backdrop-blur-md shadow-md" aria-label="Main navigation">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Removed max-w-7xl and mx-auto, kept padding for content */}
+      <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-6">
             <Link to="/" className="flex items-center hover:opacity-80 transition-opacity" aria-label="Home">

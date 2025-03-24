@@ -115,3 +115,21 @@ export interface WalletFundingRequest {
     token_balance: number;
   };
 }
+
+export interface FeaturedListing {
+  id: string;
+  title: string;
+  price: string;
+  location: string;
+  type: 'sell' | 'buy';
+  image: string;
+  description: string;
+  category: string;
+  datePosted: string;
+  image_url: string;
+  status: 'active' | 'pending' | 'sold';
+  featured: boolean;
+  farmerProfile?: Farmer;
+  buyerProfile?: Buyer;
+  unsaved?: boolean; // Add this
+}

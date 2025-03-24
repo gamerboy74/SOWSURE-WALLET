@@ -464,4 +464,186 @@ CREATE POLICY "Users can update own messages" ON messages
   TO authenticated
   USING (sender_id = auth.uid());
 
+ALTER TABLE products 
+ADD COLUMN IF NOT EXISTS featured BOOLEAN DEFAULT false;
+
+-- Policy for admins to update any product (including featured status)
+CREATE POLICY "Admins can update all products" ON products 
+FOR UPDATE 
+TO authenticated 
+USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Update existing policy to allow public to see active and featured products
+DROP POLICY IF EXISTS "Anyone can view all products" ON products;
+CREATE POLICY "Anyone can view active products" ON products 
+FOR SELECT 
+TO authenticated 
+USING (status = 'active');
+
+-- Drop existing policies that might conflict (optional, if you want to replace them)
+DROP POLICY IF EXISTS "Admins can view all farmers" ON farmers;
+DROP POLICY IF EXISTS "Admins can insert farmers" ON farmers;
+DROP POLICY IF EXISTS "Admins can update all farmers" ON farmers;
+DROP POLICY IF EXISTS "Admins can delete all farmers" ON farmers;
+
+-- Allow admins to view all farmers
+CREATE POLICY "Admins can view all farmers" ON farmers
+FOR SELECT
+TO authenticated
+USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Allow admins to insert farmers
+CREATE POLICY "Admins can insert farmers" ON farmers
+FOR INSERT
+TO authenticated
+WITH CHECK (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Allow admins to update all farmers
+CREATE POLICY "Admins can update all farmers" ON farmers
+FOR UPDATE
+TO authenticated
+USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Allow admins to delete all farmers
+CREATE POLICY "Admins can delete all farmers" ON farmers
+FOR DELETE
+TO authenticated
+USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+
+ALTER TABLE farmers
+DROP CONSTRAINT farmers_user_id_fkey,
+ADD CONSTRAINT farmers_user_id_fkey
+  FOREIGN KEY (user_id)
+  REFERENCES auth.users(id)
+  ON DELETE CASCADE;
+
+  ALTER TABLE chats
+DROP CONSTRAINT chats_farmer_id_fkey,
+ADD CONSTRAINT chats_farmer_id_fkey
+FOREIGN KEY (farmer_id)
+REFERENCES farmers (id)
+ON DELETE CASCADE;
+
+ALTER TABLE products
+DROP CONSTRAINT products_farmer_id_fkey,
+ADD CONSTRAINT products_farmer_id_fkey
+FOREIGN KEY (farmer_id)
+REFERENCES farmers (id)
+ON DELETE CASCADE;
+
+ALTER TABLE messages
+DROP CONSTRAINT messages_chat_id_fkey,
+ADD CONSTRAINT messages_chat_id_fkey
+FOREIGN KEY (chat_id)
+REFERENCES chats (id)
+ON DELETE CASCADE;
+
+-- Update foreign key constraint for buyers.user_id to cascade deletes from auth.users
+ALTER TABLE buyers
+DROP CONSTRAINT buyers_user_id_fkey,
+ADD CONSTRAINT buyers_user_id_fkey
+  FOREIGN KEY (user_id)
+  REFERENCES auth.users(id)
+  ON DELETE CASCADE;
+
+ALTER TABLE products
+DROP CONSTRAINT products_farmer_id_fkey,
+ADD CONSTRAINT products_farmer_id_fkey
+  FOREIGN KEY (farmer_id)
+  REFERENCES farmers (id)
+  ON DELETE CASCADE;
   
+-- If chats exist for buyers, update foreign key constraint for chats.buyer_id
+ALTER TABLE chats
+DROP CONSTRAINT chats_buyer_id_fkey,
+ADD CONSTRAINT chats_buyer_id_fkey
+  FOREIGN KEY (buyer_id)
+  REFERENCES buyers(id)
+  ON DELETE CASCADE;
+
+-- If messages exist and are tied to chats, ensure cascading deletes from chats
+ALTER TABLE messages
+DROP CONSTRAINT messages_chat_id_fkey,
+ADD CONSTRAINT messages_chat_id_fkey
+  FOREIGN KEY (chat_id)
+  REFERENCES chats(id)
+  ON DELETE CASCADE;
+
+  ALTER TABLE admin_users
+ADD COLUMN IF NOT EXISTS profile_photo_url TEXT;
+
+  INSERT INTO storage.buckets (id, name, public) 
+VALUES ('admin-profile-photos', 'admin-profile-photos', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Policies for admin profile photos
+CREATE POLICY "Admins can upload own profile photos" 
+ON storage.objects 
+FOR INSERT 
+TO authenticated 
+WITH CHECK (
+  bucket_id = 'admin-profile-photos' 
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+CREATE POLICY "Admins can view own profile photos" 
+ON storage.objects 
+FOR SELECT 
+TO authenticated 
+USING (
+  bucket_id = 'admin-profile-photos' 
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+CREATE POLICY "Admins can update own profile photos" 
+ON storage.objects 
+FOR UPDATE 
+TO authenticated 
+USING (
+  bucket_id = 'admin-profile-photos' 
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+CREATE POLICY "Admins can delete own profile photos" 
+ON storage.objects 
+FOR DELETE 
+TO authenticated 
+USING (
+  bucket_id = 'admin-profile-photos' 
+  AND auth.uid()::text = (storage.foldername(name))[1]
+);
+
+
+-- Policy for public read access create bucket slider-images
+CREATE POLICY "Public can read slider images"
+ON storage.objects
+FOR SELECT
+TO public
+USING (bucket_id = 'slider-images');
+
+-- Policy for admin write access
+CREATE POLICY "Admins can write slider images"
+ON storage.objects
+FOR ALL
+TO authenticated
+USING (
+  bucket_id = 'slider-images' 
+  AND auth.role() = 'authenticated'
+  AND (SELECT auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
+);
+
+
+CREATE TABLE slides (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  image_url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  subtitle TEXT NOT NULL,
+  description TEXT NOT NULL,
+  cta_primary_text TEXT NOT NULL,
+  cta_primary_link TEXT NOT NULL,
+  cta_secondary_text TEXT NOT NULL,
+  cta_secondary_link TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

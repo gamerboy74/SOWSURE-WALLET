@@ -10,6 +10,8 @@ import { publicRoutes, farmerRoutes, buyerRoutes, sharedRoutes, adminRoutes } fr
 import ProtectedRoute from "./components/ProtectedRoute";
 import LoadingSpinner from "./components/shared/LoadingSpinner";
 import AdminProtectedRoute from "../client/admin/components/AdminProtectedRoute";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 // Lazy-loaded components
 const AuthHome = lazy(() => import("../client/pages/Home"));
@@ -35,17 +37,19 @@ const MainLayout = memo(({ isAuthenticated, userType }: MainLayoutProps) => {
           </div>
         </Suspense>
       )}
-      <div
-        className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${
-          isAuthenticated ? "ml-16 lg:ml-20" : ""
-        }`}
-      >
+      <div className="flex-1 flex flex-col transition-all duration-300 ease-in-out">
+        {/* Ensure Navbar container spans full width */}
         <Suspense fallback={<LoadingSpinner />}>
-          <div className="sticky top-0 z-50 backdrop-blur-sm bg-white/75 shadow-sm">
+          <div className="sticky top-0 z-50 backdrop-blur-sm bg-white/75 shadow-sm w-full">
             <Navbar isAuthenticated={isAuthenticated} />
           </div>
         </Suspense>
-        <div className="flex-grow p-4 md:p-6 lg:p-8">
+        {/* Adjusted margin to only account for sidebar's collapsed width */}
+        <div
+          className={`flex-grow p-4 md:p-6 lg:p-8 ${
+            isAuthenticated ? "ml-12" : ""
+          }`}
+        >
           <div className="max-w-7xl mx-auto w-full">
             <Outlet />
           </div>
@@ -56,6 +60,18 @@ const MainLayout = memo(({ isAuthenticated, userType }: MainLayoutProps) => {
           </div>
         </Suspense>
       </div>
+      <ToastContainer
+        position="top-right"
+        autoClose={5000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="light"
+      />
     </div>
   );
 });

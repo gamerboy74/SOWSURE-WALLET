@@ -1,7 +1,6 @@
 import React from "react";
 import { Loader2 } from "lucide-react";
 
-// Define the Product interface (or import it from a shared file)
 interface Product {
   id: string;
   farmer_id: string | null;
@@ -17,6 +16,7 @@ interface Product {
   status: string;
   location: string;
   created_at: string;
+  featured: boolean;
 }
 
 interface ProductCardProps {
@@ -62,7 +62,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
                 ? "bg-green-100 text-green-800"
                 : product.status === "draft"
                 ? "bg-gray-100 text-gray-800"
-                : product.status === "fulfilled"
+                : product.status === "sold_out"
                 ? "bg-blue-100 text-blue-800"
                 : "bg-yellow-100 text-yellow-800"
             }`}
@@ -84,12 +84,21 @@ const ProductCard: React.FC<ProductCardProps> = ({
             {product.category}
           </span>
         </div>
+        <div className="flex justify-between items-center mb-3">
+          <span
+            className={`text-xs font-semibold ${
+              product.featured ? "text-emerald-600" : "text-gray-500"
+            }`}
+          >
+            {product.featured ? "Featured" : "Not Featured"}
+          </span>
+        </div>
         <div className="flex space-x-3 mt-4">
           <button
             onClick={() => onEdit(product)}
             className="button-transition flex-1 bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700 text-sm font-medium"
           >
-            Edit
+            {product.featured ? "Unfeature" : "Feature"}
           </button>
           <button
             onClick={onDelete}

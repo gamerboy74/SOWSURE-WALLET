@@ -9,6 +9,7 @@ interface Column {
 interface DataTableProps {
   columns: Column[];
   data: any[];
+  className?: string;
   onEdit?: (item: any) => void;
   onDelete?: (item: any) => void;
 }
