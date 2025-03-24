@@ -1,3 +1,4 @@
+// components/wallet/WalletDashboard.tsx
 import { useEffect, useState, useCallback, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
@@ -93,7 +94,7 @@ const WalletDashboard: React.FC = () => {
     }
   }, [handleError]);
 
-  // Load transactions with resilience
+  // Load transactions with token_type awareness
   const loadTransactions = useCallback(async () => {
     if (!wallet?.id) return;
     try {
@@ -214,7 +215,7 @@ const WalletDashboard: React.FC = () => {
             Welcome to Your Wallet
           </h3>
           <p className="text-gray-600 dark:text-gray-400 mb-6">
-            You don{"'"}t have a blockchain wallet yet. Create one to start managing your crypto assets.
+            You don&apos;t have a blockchain wallet yet. Create one to start managing your crypto assets.
           </p>
           <button
             onClick={handleCreateWallet}

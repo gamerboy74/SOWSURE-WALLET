@@ -1,7 +1,6 @@
-// WalletBalanceCard.tsx
+// components/wallet/WalletBalanceCard.tsx
 import React from "react";
 import { Plus } from "lucide-react";
-import type { Wallet } from "../../types/types";
 
 interface WalletBalanceCardProps {
   address: string | null;
@@ -45,24 +44,24 @@ export const WalletBalanceCard = React.memo(
                 {parseFloat(balance.eth).toFixed(4)} ETH
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                ≈ ₹{(parseFloat(balance.eth) * prices.eth).toLocaleString()} INR
+                ≈ ₹{(parseFloat(balance.eth) * prices.eth).toLocaleString("en-IN")}
               </p>
             </div>
 
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Token Balance (USDT)</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">USDT Balance</p>
               <p className="text-xl font-bold text-gray-800 dark:text-gray-200">
-                ${balance.token.toFixed(2)}
+                {balance.token.toFixed(2)} USDT
               </p>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                ≈ ₹{(balance.token * prices.usdt).toLocaleString()} INR
+                ≈ ₹{(balance.token * prices.usdt).toLocaleString("en-IN")}
               </p>
             </div>
 
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Total Value (INR)</p>
               <p className="text-xl font-bold text-gray-800 dark:text-gray-200">
-                ₹{totalValueINR.toLocaleString()}
+                ₹{totalValueINR.toLocaleString("en-IN")}
               </p>
             </div>
           </div>

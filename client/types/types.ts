@@ -82,7 +82,9 @@ export interface WalletTransaction {
     network?: "sepolia" | "mainnet" | null;
     note?: string | null;
     blockNumber?: number | null;
+    tokenType?: "ETH" | "USDT"; // Added tokenType
   };
+  token_type?: "ETH" | "USDT"; // Already in schema
 }
 
 export interface WalletFundingRequest {

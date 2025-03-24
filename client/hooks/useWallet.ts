@@ -6,35 +6,31 @@ import { WalletService } from "../services/wallet.service";
 export function useWallet() {
   const [address, setAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState({ eth: "0", token: 0 });
-  const [prices, setPrices] = useState({ eth: 150000, usdt: 83 }); // Default prices in INR
+  const [prices, setPrices] = useState({ eth: 150000, usdt: 83 }); // Fallback prices in INR
   const [loading, setLoading] = useState(false);
 
-  // Fetch ETH balance for a given address
-  const loadEthBalance = async (walletAddress: string) => {
+  const loadBalances = async (walletAddress: string) => {
     try {
-      const { balance } = await WalletService.getWalletBalance(walletAddress, "onchain");
-      setBalance((prev) => ({ ...prev, eth: balance }));
+      const [ethData, usdtBalance] = await Promise.all([
+        WalletService.getWalletBalance(walletAddress, "onchain"),
+        WalletService.getUsdtBalance(walletAddress),
+      ]);
+      setBalance({ eth: String(ethData.balance), token: parseFloat(usdtBalance) });
     } catch (error) {
-      console.error("Error loading ETH balance:", error);
-      setBalance((prev) => ({ ...prev, eth: "0" }));
+      console.error("Error loading balances:", error);
+      setBalance({ eth: "0", token: 0 });
     }
   };
 
-  // Create a new wallet
   const createWallet = async () => {
     try {
       setLoading(true);
       const response = await WalletService.createWallet();
-      console.log("Wallet created:", response);
-
-      // Update state immediately
       setAddress(response.address);
-      setBalance({ eth: "0", token: 1000 });
+      setBalance({ eth: "0", token: 0 });
 
-      // Fetch ETH balance after creation
-      await loadEthBalance(response.address);
+      await loadBalances(response.address);
 
-      // Store credentials temporarily (if needed elsewhere)
       localStorage.setItem(
         "tempWalletCredentials",
         JSON.stringify({
@@ -54,61 +50,54 @@ export function useWallet() {
     }
   };
 
-  // Initialize wallet and set up balance polling
   useEffect(() => {
     let mounted = true;
-    const pollInterval = 10000; // Poll every 10 seconds
+    const pollInterval = 10000;
 
     const initWallet = async () => {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user || !mounted) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !mounted) return;
 
-        const { data: walletRecords, error } = await supabase
-          .from("wallets")
-          .select("*")
-          .eq("user_id", user.id);
+      const { data: walletRecords, error } = await supabase
+        .from("wallets")
+        .select("*")
+        .eq("user_id", user.id);
 
-        if (error) throw new Error(`Supabase query failed: ${error.message}`);
+      if (error) throw new Error(`Supabase query failed: ${error.message}`);
 
-        if (!walletRecords || walletRecords.length === 0) {
-          console.log("No wallet found, creating new wallet...");
-          await createWallet(); // This will set address and balance
-          return;
-        }
+      if (!walletRecords || walletRecords.length === 0) {
+        await createWallet();
+        return;
+      }
 
-        const walletRecord = walletRecords[0];
-        if (mounted) {
-          setAddress(walletRecord.wallet_address);
-          setBalance((prev) => ({ ...prev, token: walletRecord.token_balance || 0 }));
-          await loadEthBalance(walletRecord.wallet_address);
-        }
-      } catch (error) {
-        console.error("Error initializing wallet:", error);
+      const walletRecord = walletRecords[0];
+      if (mounted) {
+        setAddress(walletRecord.wallet_address);
+        await loadBalances(walletRecord.wallet_address);
       }
     };
 
     initWallet();
 
-    // Poll ETH balance if address exists
+    const unsubscribe = address
+      ? WalletService.subscribeToBalanceUpdates(address, ({ eth, usdt }) => {
+          if (mounted) setBalance({ eth, token: parseFloat(usdt || "0") });
+        })
+      : () => {};
+
     const intervalId = address
-      ? setInterval(async () => {
-          if (mounted && address) {
-            await loadEthBalance(address);
-          }
+      ? setInterval(() => {
+          if (mounted && address) loadBalances(address);
         }, pollInterval)
       : null;
 
-    // Cleanup
     return () => {
       mounted = false;
+      unsubscribe();
       if (intervalId) clearInterval(intervalId);
     };
-  }, [address]); // Re-run when address changes
+  }, [address]);
 
-  // Fetch and update prices
   useEffect(() => {
     let mounted = true;
     const fetchPrices = async () => {
@@ -116,24 +105,29 @@ export function useWallet() {
         const cached = localStorage.getItem("cached_prices");
         if (cached) {
           const { prices: cachedPrices, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < 10 * 60 * 1000) {
-            setPrices(cachedPrices);
+          if (Date.now() - timestamp < 10 * 60 * 1000) { // 10-minute cache
+            if (mounted) setPrices(cachedPrices);
             return;
           }
         }
 
-        const [ethResponse, usdtResponse] = await Promise.all([
-          fetch("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"),
-          fetch("https://api.binance.com/api/v3/ticker/price?symbol=USDTBIDR"),
+        // Fetch ETH/USDT and USD/INR prices using free APIs
+        const [ethResponse, usdInrResponse] = await Promise.all([
+          fetch("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"), // Free Binance API
+          fetch("https://api.exchangerate-api.com/v4/latest/USD"), // Free USD/INR API (no key needed for basic use)
         ]);
 
-        if (!ethResponse.ok || !usdtResponse.ok) throw new Error("Failed to fetch prices");
+        if (!ethResponse.ok || !usdInrResponse.ok) throw new Error("Failed to fetch prices");
 
-        const [ethData, usdtData] = await Promise.all([ethResponse.json(), usdtResponse.json()]);
-        const usdToInr = 83;
+        const [ethData, usdInrData] = await Promise.all([ethResponse.json(), usdInrResponse.json()]);
+        
+        // Get USD/INR exchange rate
+        const usdToInr = parseFloat(usdInrData.rates.INR);
+        const ethPriceUsd = parseFloat(ethData.price); // ETH price in USD
+
         const newPrices = {
-          eth: Math.round(parseFloat(ethData.price) * usdToInr),
-          usdt: usdToInr,
+          eth: Math.round(ethPriceUsd * usdToInr), // ETH price in INR
+          usdt: usdToInr, // USDT price in INR (1 USDT = usdToInr INR)
         };
 
         if (mounted) {
@@ -142,12 +136,12 @@ export function useWallet() {
         }
       } catch (error) {
         console.warn("Price fetch error:", error);
-        setPrices({ eth: 150000, usdt: 83 }); // Fallback to defaults
+        if (mounted) setPrices({ eth: 150000, usdt: 83 }); // Fallback prices in INR
       }
     };
 
     fetchPrices();
-    const interval = setInterval(fetchPrices, 10 * 60 * 1000);
+    const interval = setInterval(fetchPrices, 10 * 60 * 1000); // Refresh every 10 minutes
 
     return () => {
       mounted = false;
@@ -165,12 +159,5 @@ export function useWallet() {
     return null;
   };
 
-  return {
-    address,
-    balance,
-    prices,
-    createWallet,
-    loading,
-    checkNewWalletCredentials,
-  };
+  return { address, balance, prices, createWallet, loading, checkNewWalletCredentials };
 }

@@ -13,7 +13,7 @@ import AdminProtectedRoute from "../client/admin/components/AdminProtectedRoute"
 
 // Lazy-loaded components
 const AuthHome = lazy(() => import("../client/pages/Home"));
-const Navbar = lazy(() => import("../client/components/Navbar"));
+const Navbar = lazy(() => import("../client/components/Navbar/Navbar"));
 const Footer = lazy(() => import("../client/components/Footer"));
 const Sidebar = lazy(() => import("../client/components/Sidebar"));
 const AdminLayout = lazy(() => import("../client/admin/pages/AdminLayout"));

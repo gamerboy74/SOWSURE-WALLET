@@ -1,7 +1,9 @@
+// components/wallet/TransferSection.tsx
 import React, { useState } from "react";
 import { ArrowUpDown, Loader2 } from "lucide-react";
 import { WalletService } from "../../services/wallet.service";
 import { ethers } from "ethers";
+import { toast } from "react-toastify";
 import type { Wallet } from "../../types/types";
 
 interface TransferSectionProps {
@@ -55,7 +57,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
 );
 
 export const TransferSection = React.memo(
-  ({ wallet, setError }: TransferSectionProps) => {
+  ({ wallet, setError, onTransferComplete }: TransferSectionProps) => {
     const [transferAmount, setTransferAmount] = useState<string>("");
     const [recipientAddress, setRecipientAddress] = useState<string>("");
     const [isTransferring, setIsTransferring] = useState(false);
@@ -116,12 +118,34 @@ export const TransferSection = React.memo(
         );
         setTransferAmount("");
         setRecipientAddress("");
-        // No need to call onTransferComplete() since WebSocket will handle updates
-        setError(null);
-        alert(`${transferType ? "ETH" : "USDT"} transfer initiated! ${result.txHash ? `Tx: ${result.txHash}` : ""}`);
+        // Show toast notification instead of alert
+        toast.success(
+          <div>
+            {transferType ? "ETH" : "USDT"} transfer initiated!
+            {result.txHash && (
+              <>
+                <br />
+                Transaction Hash:{" "}
+                <a
+                  href={`https://sepolia.etherscan.io/tx/${result.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  {result.txHash.slice(0, 8)}...{result.txHash.slice(-8)}
+                </a>
+              </>
+            )}
+          </div>,
+          { autoClose: 10000 }
+        );
+        // Call onTransferComplete to refresh transaction history
+        await onTransferComplete();
       } catch (error) {
         console.error(`${transferType ? "ETH" : "USDT"} transfer error:`, error);
-        setError(error instanceof Error ? error.message : `Failed to transfer ${transferType ? "ETH" : "USDT"}`);
+        const errorMessage = error instanceof Error ? error.message : `Failed to transfer ${transferType ? "ETH" : "USDT"}`;
+        setError(errorMessage);
+        toast.error(errorMessage);
       } finally {
         setIsTransferring(false);
       }

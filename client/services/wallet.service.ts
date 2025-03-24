@@ -1,19 +1,192 @@
+// services/wallet.service.ts
 import { supabase } from "../lib/supabase";
 import type { WalletTransaction } from "../types/types";
-import { Wallet, ethers, JsonRpcProvider, WebSocketProvider, TransactionResponse } from "ethers";
+import { Wallet, ethers, JsonRpcProvider, WebSocketProvider, TransactionResponse, Contract } from "ethers";
 import * as CryptoJS from "crypto-js";
 import EventEmitter from "eventemitter3";
 
+// USDT contract details for Sepolia
+const USDT_CONTRACT_ADDRESS = "0xd16B472C1b3AB8bc40C1321D7b33dB857e823f01"; // Updated address
+const USDT_ABI = [
+  {
+    "inputs": [
+      { "internalType": "address", "name": "spender", "type": "address" },
+      { "internalType": "uint256", "name": "value", "type": "uint256" }
+    ],
+    "name": "approve",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "spender", "type": "address" },
+      { "internalType": "uint256", "name": "allowance", "type": "uint256" },
+      { "internalType": "uint256", "name": "needed", "type": "uint256" }
+    ],
+    "name": "ERC20InsufficientAllowance",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "sender", "type": "address" },
+      { "internalType": "uint256", "name": "balance", "type": "uint256" },
+      { "internalType": "uint256", "name": "needed", "type": "uint256" }
+    ],
+    "name": "ERC20InsufficientBalance",
+    "type": "error"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "approver", "type": "address" }],
+    "name": "ERC20InvalidApprover",
+    "type": "error"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "receiver", "type": "address" }],
+    "name": "ERC20InvalidReceiver",
+    "type": "error"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "sender", "type": "address" }],
+    "name": "ERC20InvalidSender",
+    "type": "error"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "spender", "type": "address" }],
+    "name": "ERC20InvalidSpender",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "owner", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "spender", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" }
+    ],
+    "name": "Approval",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "to", "type": "address" },
+      { "internalType": "uint256", "name": "value", "type": "uint256" }
+    ],
+    "name": "transfer",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "from", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "to", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" }
+    ],
+    "name": "Transfer",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "from", "type": "address" },
+      { "internalType": "address", "name": "to", "type": "address" },
+      { "internalType": "uint256", "name": "value", "type": "uint256" }
+    ],
+    "name": "transferFrom",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "owner", "type": "address" },
+      { "internalType": "address", "name": "spender", "type": "address" }
+    ],
+    "name": "allowance",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
+    "name": "balanceOf",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "decimals",
+    "outputs": [{ "internalType": "uint8", "name": "", "type": "uint8" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "name",
+    "outputs": [{ "internalType": "string", "name": "", "type": "string" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "symbol",
+    "outputs": [{ "internalType": "string", "name": "", "type": "string" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalSupply",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  }
+] as const;
+
+// Define a type alias for the USDT contract
+type USDTContract = Omit<Contract, "transfer" | "balanceOf" | "decimals"> & {
+  balanceOf(address: string): Promise<ethers.BigNumberish>;
+  transfer(to: string, value: ethers.BigNumberish): Promise<TransactionResponse>;
+  decimals(): Promise<number>;
+};
+
+// Type the contract instance
 export class WalletService {
   private static TESTNET_RPC_URL = import.meta.env.VITE_PUBLIC_ALCHEMY_RPC_URL;
   private static TESTNET_WS_URL = import.meta.env.VITE_PUBLIC_ALCHEMY_WS_URL;
   private static ENCRYPTION_KEY = import.meta.env.VITE_WALLET_ENCRYPTION_KEY;
   public static provider = new JsonRpcProvider(WalletService.TESTNET_RPC_URL);
   private static wsProvider: WebSocketProvider | null = null;
+  private static usdtContract: USDTContract = new Contract(
+    USDT_CONTRACT_ADDRESS,
+    USDT_ABI,
+    WalletService.provider
+  ) as unknown as USDTContract;
   private static eventEmitter = new EventEmitter();
   private static processedTxHashes: Set<string> = new Set();
+  private static usdtDecimals: number | null = null;
 
-  static subscribeToBalanceUpdates(address: string, callback: (balance: string) => void) {
+  // Initialize USDT decimals on startup
+  static async initialize() {
+    try {
+      this.usdtDecimals = await this.usdtContract.decimals();
+      console.log(`USDT contract decimals: ${this.usdtDecimals}`);
+    } catch (error) {
+      console.error("Error fetching USDT decimals, defaulting to 6:", error);
+      this.usdtDecimals = 6; // Fallback to 6 if fetching fails
+    }
+  }
+
+  static subscribeToBalanceUpdates(
+    address: string,
+    callback: (balance: { eth: string; usdt: string }) => void
+  ) {
     this.eventEmitter.on(`balance:${address}`, callback);
     return () => this.eventEmitter.off(`balance:${address}`, callback);
   }
@@ -33,12 +206,18 @@ export class WalletService {
       this.wsProvider = new WebSocketProvider(this.TESTNET_WS_URL);
     }
 
-    const listener = async (txHash: string) => {
+    const ethListener = async (txHash: string) => {
       try {
-        if (this.processedTxHashes.has(txHash)) return;
+        if (this.processedTxHashes.has(txHash)) {
+          console.log(`Skipping already processed ETH txHash: ${txHash}`);
+          return;
+        }
 
         const tx = await this.wsProvider!.getTransaction(txHash);
-        if (!tx) return;
+        if (!tx) {
+          console.log(`No transaction found for txHash: ${txHash}`);
+          return;
+        }
 
         const addressLower = address.toLowerCase();
         if (tx.from.toLowerCase() === addressLower || tx.to?.toLowerCase() === addressLower) {
@@ -49,26 +228,33 @@ export class WalletService {
             .eq("metadata->>txHash", tx.hash)
             .single();
 
-          if (!existingTx) {
+          if (existingTx) {
+            console.log(`ETH transaction already exists in DB: ${tx.hash}`);
             this.processedTxHashes.add(tx.hash);
-            const isReceived = tx.to?.toLowerCase() === addressLower;
-            const value = parseFloat(ethers.formatEther(tx.value));
-
-            const newTx = await this.createTransaction(
-              walletId,
-              value,
-              isReceived ? "DEPOSIT" : "WITHDRAWAL",
-              {
-                txHash: tx.hash,
-                fromAddress: tx.from,
-                toAddress: tx.to || "",
-                network: "sepolia",
-              }
-            );
-
-            console.log("Emitting new transaction from WebSocket:", newTx);
-            this.eventEmitter.emit(`transaction:${walletId}`, newTx);
+            return;
           }
+
+          this.processedTxHashes.add(tx.hash);
+          console.log(`Processing new ETH transaction: ${tx.hash}`);
+
+          const isReceived = tx.to?.toLowerCase() === addressLower;
+          const value = parseFloat(ethers.formatEther(tx.value));
+
+          const newTx = await this.createTransaction(
+            walletId,
+            value,
+            isReceived ? "DEPOSIT" : "WITHDRAWAL",
+            {
+              txHash: tx.hash,
+              fromAddress: tx.from,
+              toAddress: tx.to || "",
+              network: "sepolia",
+              tokenType: "ETH",
+            }
+          );
+
+          console.log("Emitting new ETH transaction from WebSocket:", newTx);
+          this.eventEmitter.emit(`transaction:${walletId}`, newTx);
 
           const receipt = await this.wsProvider!.waitForTransaction(tx.hash);
           if (receipt?.status === 1) {
@@ -84,21 +270,76 @@ export class WalletService {
                 .update({ status: "COMPLETED" })
                 .eq("id", currentTx.id);
               const updatedTx = { ...currentTx, status: "COMPLETED" };
-              console.log("Emitting status update from WebSocket:", updatedTx);
+              console.log("Emitting ETH status update from WebSocket:", updatedTx);
               this.eventEmitter.emit(`transaction:${walletId}`, updatedTx);
             }
           }
         }
       } catch (error) {
-        console.error("Error processing WebSocket transaction:", error);
+        console.error("Error processing ETH WebSocket transaction:", error);
       }
     };
 
-    this.wsProvider.on("pending", listener);
+    const usdtListener = async (from: string, to: string, value: ethers.BigNumberish, event: ethers.EventLog) => {
+      try {
+        const addressLower = address.toLowerCase();
+        if (from.toLowerCase() === addressLower || to.toLowerCase() === addressLower) {
+          const txHash = event.transactionHash;
+          const { data: existingTx } = await supabase
+            .from("wallet_transactions")
+            .select("*")
+            .eq("wallet_id", walletId)
+            .eq("metadata->>txHash", txHash)
+            .single();
+
+          if (existingTx) {
+            console.log(`USDT transaction already exists in DB: ${txHash}`);
+            return;
+          }
+
+          const decimals = this.usdtDecimals || 6;
+          const amount = parseFloat(ethers.formatUnits(value, decimals));
+          const type = from.toLowerCase() === addressLower ? "WITHDRAWAL" : "DEPOSIT";
+
+          const newTx = await this.createTransaction(
+            walletId,
+            amount,
+            type,
+            {
+              txHash,
+              fromAddress: from,
+              toAddress: to,
+              network: "sepolia",
+              tokenType: "USDT",
+            }
+          );
+
+          await supabase.from("wallet_transactions").update({ status: "COMPLETED" }).eq("id", newTx.id);
+          console.log("Emitting new USDT transaction from WebSocket:", newTx);
+          this.eventEmitter.emit(`transaction:${walletId}`, { ...newTx, status: "COMPLETED" });
+
+          const usdtBalance = await this.getUsdtBalance(address);
+          await supabase
+            .from("wallets")
+            .update({ token_balance: parseFloat(usdtBalance) })
+            .eq("wallet_address", address);
+          this.eventEmitter.emit(`balance:${address}`, {
+            eth: ethers.formatEther(await this.provider.getBalance(address)),
+            usdt: usdtBalance,
+          });
+        }
+      } catch (error) {
+        console.error("Error processing USDT WebSocket transaction:", error);
+      }
+    };
+
+    this.wsProvider.on("pending", ethListener);
+    this.usdtContract.on("Transfer", usdtListener);
 
     return () => {
       if (this.wsProvider) {
-        this.wsProvider.off("pending", listener);
+        this.wsProvider.off("pending", ethListener);
+        this.usdtContract.off("Transfer", usdtListener);
         if (!this.wsProvider.listenerCount("pending")) {
           this.wsProvider.destroy();
           this.wsProvider = null;
@@ -113,20 +354,35 @@ export class WalletService {
       if (type === "onchain") {
         const balance = await this.provider.getBalance(addressOrUserId);
         const formattedBalance = ethers.formatEther(balance);
-        this.eventEmitter.emit(`balance:${addressOrUserId}`, formattedBalance);
+        this.eventEmitter.emit(`balance:${addressOrUserId}`, { eth: formattedBalance, usdt: null });
         return { balance: formattedBalance, type: "ETH" };
       } else {
-        const { data, error } = await supabase
-          .from("wallets")
-          .select("token_balance")
-          .eq("user_id", addressOrUserId)
-          .single();
-        if (error) throw error;
-        return { balance: data.token_balance, type: "TOKEN" };
+        const usdtBalance = await this.getUsdtBalance(addressOrUserId);
+        return { balance: parseFloat(usdtBalance), type: "USDT" };
       }
     } catch (error) {
       console.error("Error getting balance:", error);
       throw error;
+    }
+  }
+
+  static async getUsdtBalance(address: string): Promise<string> {
+    try {
+      const balance = await this.usdtContract.balanceOf(address);
+      const decimals = this.usdtDecimals || 6;
+      const formattedBalance = ethers.formatUnits(balance, decimals);
+      await supabase
+        .from("wallets")
+        .update({ token_balance: parseFloat(formattedBalance) })
+        .eq("wallet_address", address);
+      this.eventEmitter.emit(`balance:${address}`, {
+        eth: ethers.formatEther(await this.provider.getBalance(address)),
+        usdt: formattedBalance,
+      });
+      return formattedBalance;
+    } catch (error) {
+      console.error("Error fetching USDT balance:", error);
+      return "0";
     }
   }
 
@@ -144,7 +400,10 @@ export class WalletService {
         .eq("metadata->>txHash", metadata.txHash)
         .single();
 
-      if (existingTx) return existingTx;
+      if (existingTx) {
+        console.log(`Transaction already exists for txHash: ${metadata.txHash}`);
+        return existingTx;
+      }
     }
 
     const { data, error } = await supabase
@@ -156,6 +415,7 @@ export class WalletService {
         status: "PENDING",
         metadata,
         created_at: new Date().toISOString(),
+        token_type: metadata?.tokenType || "USDT",
       })
       .select()
       .single();
@@ -236,30 +496,38 @@ export class WalletService {
         const tx = await this.sendTransaction(walletInfo.privateKey, toAddress, amountString);
         return { txHash: tx.hash, message: "ETH transfer initiated" };
       } else {
-        const { data, error } = await supabase.rpc("transfer_tokens", {
-          from_wallet_id: fromWalletId,
-          to_wallet_id: toAddress,
-          amount: parseFloat(amountString),
-        });
-
-        if (error) throw new Error(`USDT transfer failed: ${error.message}`);
+        const wallet = new Wallet(walletInfo.privateKey, this.provider);
+        const usdtContractWithSigner = this.usdtContract.connect(wallet) as unknown as USDTContract;
+        const tx = await usdtContractWithSigner.transfer(toAddress, ethers.parseUnits(amountString, this.usdtDecimals || 6));
 
         const newTx = await this.createTransaction(
           fromWalletId,
           parseFloat(amountString),
           "WITHDRAWAL",
-          { toAddress, note: "USDT Transfer", network: "sepolia" }
+          {
+            txHash: tx.hash,
+            toAddress,
+            note: "USDT Transfer",
+            network: "sepolia",
+            tokenType: "USDT",
+          }
         );
 
-        const updatedTx = { ...newTx, status: "COMPLETED" };
-        await supabase
-          .from("wallet_transactions")
-          .update({ status: "COMPLETED" })
-          .eq("id", newTx.id);
+        const receipt = await tx.wait();
+        if (receipt && receipt.status === 1) {
+          await supabase.from("wallet_transactions").update({ status: "COMPLETED" }).eq("id", newTx.id);
+          const updatedTx = { ...newTx, status: "COMPLETED" };
+          console.log("Emitting USDT transfer:", updatedTx);
+          this.eventEmitter.emit(`transaction:${fromWalletId}`, updatedTx);
 
-        console.log("Emitting USDT transfer:", updatedTx);
-        this.eventEmitter.emit(`transaction:${fromWalletId}`, updatedTx);
-        return { message: "USDT transfer completed" };
+          const usdtBalance = await this.getUsdtBalance(walletInfo.address);
+          await supabase
+            .from("wallets")
+            .update({ token_balance: parseFloat(usdtBalance) })
+            .eq("wallet_address", walletInfo.address);
+        }
+
+        return { txHash: tx.hash, message: "USDT transfer completed" };
       }
     } catch (error) {
       console.error("Error transferring funds:", error);
@@ -267,7 +535,11 @@ export class WalletService {
     }
   }
 
-  static async sendTransaction(fromPrivateKey: string, toAddress: string, amount: string): Promise<TransactionResponse> {
+  static async sendTransaction(
+    fromPrivateKey: string,
+    toAddress: string,
+    amount: string
+  ): Promise<TransactionResponse> {
     try {
       const wallet = new Wallet(fromPrivateKey, this.provider);
       const tx = await wallet.sendTransaction({
@@ -287,6 +559,7 @@ export class WalletService {
       if (!walletData) throw new Error("Wallet not found");
 
       this.processedTxHashes.add(tx.hash);
+      console.log(`Added ETH txHash to processedTxHashes: ${tx.hash}`);
 
       const newTx = await this.createTransaction(
         walletData.id,
@@ -295,7 +568,8 @@ export class WalletService {
         {
           txHash: tx.hash,
           toAddress,
-          network: "sepolia"
+          network: "sepolia",
+          tokenType: "ETH"
         }
       );
 
@@ -309,11 +583,7 @@ export class WalletService {
     }
   }
 
-  static async createWallet(): Promise<{
-    address: string;
-    privateKey: string;
-    mnemonic: string;
-  }> {
+  static async createWallet(): Promise<{ address: string; privateKey: string; mnemonic: string }> {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("User not authenticated");
@@ -332,27 +602,21 @@ export class WalletService {
           wallet_address: address,
           encrypted_private_key: await this.encrypt(privateKey),
           encrypted_mnemonic: await this.encrypt(mnemonic),
-          token_balance: 1000,
-          network: "sepolia",
           balance: 0,
+          token_balance: 0,
+          network: "sepolia",
           wallet_type: "ETH",
           status: "ACTIVE",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           blockchain_network: "sepolia",
+          token_type: "USDT",
         })
         .select()
         .single();
 
       if (insertError) throw insertError;
       if (!newWallet) throw new Error("Wallet created but no data returned");
-
-      await this.createTransaction(
-        newWallet.id,
-        1000,
-        "DEPOSIT",
-        { note: "Initial wallet creation" }
-      );
 
       return { address, privateKey, mnemonic };
     } catch (error) {
@@ -366,11 +630,7 @@ export class WalletService {
     console.log("Please get test ETH from: https://sepoliafaucet.com");
   }
 
-  static async getWalletInfo(): Promise<{
-    address: string;
-    privateKey: string;
-    mnemonic: string;
-  } | null> {
+  static async getWalletInfo(): Promise<{ address: string; privateKey: string; mnemonic: string } | null> {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
@@ -395,11 +655,7 @@ export class WalletService {
     }
   }
 
-  static async getOrCreateWallet(): Promise<{
-    address: string;
-    privateKey: string;
-    mnemonic: string;
-  } | null> {
+  static async getOrCreateWallet(): Promise<{ address: string; privateKey: string; mnemonic: string } | null> {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
@@ -478,7 +734,7 @@ export class WalletService {
           user_id: user.id,
           wallet_id: wallet.id,
           amount_usdt: amount,
-          amount_inr: amount * 83,
+          amount_inr: amount * 83, // Update to use real-time INR rate if integrated elsewhere
           status: "PENDING",
         },
       ]);
@@ -505,3 +761,6 @@ export class WalletService {
     return bytes.toString(CryptoJS.enc.Utf8);
   }
 }
+
+// Initialize USDT decimals on module load
+WalletService.initialize();

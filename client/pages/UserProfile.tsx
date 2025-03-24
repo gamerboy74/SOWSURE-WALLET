@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
-import { Search, ChevronDown, MapPin, Star, MessageCircle } from 'lucide-react';
-import { createClient } from '@supabase/supabase-js';
-import ProductCard from '../components/profile/ProductCard';
-import { useChat } from '../hooks/useChat';
-import ChatWindow from '../components/chat/ChatWindow';
+import React, { useState, useEffect, useCallback } from "react";
+import { useParams } from "react-router-dom";
+import { Search, ChevronDown, MapPin, Star, MessageCircle } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
+import ProductCard from "../components/profile/ProductCard";
+import { useChat } from "../hooks/useChat";
+import ChatWindow from "../components/chat/ChatWindow";
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -15,7 +15,7 @@ const supabase = createClient(
 interface User {
   id: string;
   name: string;
-  type: 'Farmer' | 'Buyer';
+  type: "Farmer" | "Buyer";
   image?: string;
   location: string;
   rating: number;
@@ -39,64 +39,78 @@ interface Product {
 }
 
 const categories = [
-  'All Products',
-  'Grains',
-  'Vegetables',
-  'Fruits',
-  'Pulses',
-  'Herbs',
-  'Other',
+  "All Products",
+  "Grains",
+  "Vegetables",
+  "Fruits",
+  "Pulses",
+  "Herbs",
+  "Other",
 ];
 
 const UserProfile: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [user, setUser] = useState<User | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-  const [activeCategory, setActiveCategory] = useState('All Products');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState("All Products");
+  const [searchQuery, setSearchQuery] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [currentUserType, setCurrentUserType] = useState<'Farmer' | 'Buyer' | null>(null);
+  const [currentUserType, setCurrentUserType] = useState<
+    "Farmer" | "Buyer" | null
+  >(null);
 
   const fetchUserData = useCallback(async () => {
     try {
-      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+      const {
+        data: { user: authUser },
+        error: authError,
+      } = await supabase.auth.getUser();
       if (authError) throw new Error(`Auth error: ${authError.message}`);
       if (authUser) setCurrentUserId(authUser.id);
-      console.log('Authenticated User:', authUser);
+      console.log("Authenticated User:", authUser);
 
       let userData: User | null = null;
       let productsData: Product[] = [];
 
       // Fetch farmer data
       const { data: farmerData, error: farmerError } = await supabase
-        .from('farmers')
-        .select('id, name, complete_address, profile_photo_url, created_at, land_type, user_id')
-        .eq('id', id)
+        .from("farmers")
+        .select(
+          "id, name, complete_address, profile_photo_url, created_at, land_type, user_id"
+        )
+        .eq("id", id)
         .single();
 
       if (farmerData && !farmerError) {
         userData = {
           id: farmerData.id,
           name: farmerData.name,
-          type: 'Farmer',
+          type: "Farmer",
           image: farmerData.profile_photo_url,
-          location: farmerData.complete_address || 'Unknown',
+          location: farmerData.complete_address || "Unknown",
           rating: 4.5,
           totalProducts: 0,
-          totalSales: '0.00 ETH',
-          about: `Farmer specializing in ${farmerData.land_type || 'general farming'}`,
-          memberSince: new Date(farmerData.created_at).toISOString().split('T')[0],
+          totalSales: "0.00 ETH",
+          about: `Farmer specializing in ${
+            farmerData.land_type || "general farming"
+          }`,
+          memberSince: new Date(farmerData.created_at)
+            .toISOString()
+            .split("T")[0],
           userId: farmerData.user_id,
         };
 
         const { data: farmerProducts, error: productsError } = await supabase
-          .from('products')
-          .select('id, name, price, quantity, unit, image_url, status, farmer_id, category')
-          .eq('farmer_id', id)
-          .eq('type', 'sell');
+          .from("products")
+          .select(
+            "id, name, price, quantity, unit, image_url, status, farmer_id, category"
+          )
+          .eq("farmer_id", id)
+          .eq("type", "sell");
 
-        if (productsError) throw new Error(`Farmer products error: ${productsError.message}`);
-        console.log('Farmer Products:', farmerProducts);
+        if (productsError)
+          throw new Error(`Farmer products error: ${productsError.message}`);
+        console.log("Farmer Products:", farmerProducts);
 
         productsData = (farmerProducts || []).map((p) => ({
           id: p.id,
@@ -117,34 +131,43 @@ const UserProfile: React.FC = () => {
       } else {
         // Fetch buyer data
         const { data: buyerData, error: buyerError } = await supabase
-          .from('buyers')
-          .select('id, contact_name, business_address, profile_photo_url, created_at, business_type, user_id')
-          .eq('id', id)
+          .from("buyers")
+          .select(
+            "id, contact_name, business_address, profile_photo_url, created_at, business_type, user_id"
+          )
+          .eq("id", id)
           .single();
 
         if (buyerData && !buyerError) {
           userData = {
             id: buyerData.id,
             name: buyerData.contact_name,
-            type: 'Buyer',
+            type: "Buyer",
             image: buyerData.profile_photo_url,
-            location: buyerData.business_address || 'Unknown',
+            location: buyerData.business_address || "Unknown",
             rating: 4.5,
             totalProducts: 0,
-            totalSales: '0 Orders',
-            about: `Buyer specializing in ${buyerData.business_type || 'general buying'}`,
-            memberSince: new Date(buyerData.created_at).toISOString().split('T')[0],
+            totalSales: "0 Orders",
+            about: `Buyer specializing in ${
+              buyerData.business_type || "general buying"
+            }`,
+            memberSince: new Date(buyerData.created_at)
+              .toISOString()
+              .split("T")[0],
             userId: buyerData.user_id,
           };
 
           const { data: buyerProducts, error: productsError } = await supabase
-            .from('products')
-            .select('id, name, price, quantity, unit, image_url, status, buyer_id, category')
-            .eq('buyer_id', id)
-            .eq('type', 'buy');
+            .from("products")
+            .select(
+              "id, name, price, quantity, unit, image_url, status, buyer_id, category"
+            )
+            .eq("buyer_id", id)
+            .eq("type", "buy");
 
-          if (productsError) throw new Error(`Buyer products error: ${productsError.message}`);
-          console.log('Buyer Products:', buyerProducts);
+          if (productsError)
+            throw new Error(`Buyer products error: ${productsError.message}`);
+          console.log("Buyer Products:", buyerProducts);
 
           productsData = (buyerProducts || []).map((p) => ({
             id: p.id,
@@ -165,12 +188,12 @@ const UserProfile: React.FC = () => {
         }
       }
 
-      if (!userData) throw new Error('User not found');
+      if (!userData) throw new Error("User not found");
       setUser(userData);
       setProducts(productsData);
-      console.log('Products Set:', productsData);
+      console.log("Products Set:", productsData);
     } catch (error) {
-      console.error('Error fetching user data:', error);
+      console.error("Error fetching user data:", error);
     }
   }, [id]);
 
@@ -178,20 +201,24 @@ const UserProfile: React.FC = () => {
     fetchUserData();
 
     const productSubscription = supabase
-      .channel('products-changes')
+      .channel("products-changes")
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'products' },
+        "postgres_changes",
+        { event: "*", schema: "public", table: "products" },
         (payload) => {
           const isRelevant =
-            (user?.type === 'Farmer' && (payload.new as { farmer_id?: string }).farmer_id === id) ||
-            (user?.type === 'Buyer' && (payload.new as { buyer_id?: string }).buyer_id === id) ||
-            (payload.eventType === 'DELETE' &&
-              ((user?.type === 'Farmer' && (payload.old as { farmer_id?: string }).farmer_id === id) ||
-               (user?.type === 'Buyer' && (payload.old as { buyer_id?: string }).buyer_id === id)));
-          
+            (user?.type === "Farmer" &&
+              (payload.new as { farmer_id?: string }).farmer_id === id) ||
+            (user?.type === "Buyer" &&
+              (payload.new as { buyer_id?: string }).buyer_id === id) ||
+            (payload.eventType === "DELETE" &&
+              ((user?.type === "Farmer" &&
+                (payload.old as { farmer_id?: string }).farmer_id === id) ||
+                (user?.type === "Buyer" &&
+                  (payload.old as { buyer_id?: string }).buyer_id === id)));
+
           if (isRelevant) {
-            console.log('Relevant product change detected:', payload);
+            console.log("Relevant product change detected:", payload);
             fetchUserData();
           }
         }
@@ -207,22 +234,22 @@ const UserProfile: React.FC = () => {
     const fetchCurrentUserType = async () => {
       if (!currentUserId) return;
       const { data: farmerData, error: farmerError } = await supabase
-        .from('farmers')
-        .select('id')
-        .eq('user_id', currentUserId)
+        .from("farmers")
+        .select("id")
+        .eq("user_id", currentUserId)
         .single();
 
       if (farmerData && !farmerError) {
-        setCurrentUserType('Farmer');
+        setCurrentUserType("Farmer");
       } else {
         const { data: buyerData, error: buyerError } = await supabase
-          .from('buyers')
-          .select('id')
-          .eq('user_id', currentUserId)
+          .from("buyers")
+          .select("id")
+          .eq("user_id", currentUserId)
           .single();
 
         if (buyerData && !buyerError) {
-          setCurrentUserType('Buyer');
+          setCurrentUserType("Buyer");
         }
       }
     };
@@ -231,19 +258,20 @@ const UserProfile: React.FC = () => {
 
   const disableChat = Boolean(
     currentUserId === user?.userId ||
-    (currentUserType && user?.type && currentUserType === user.type)
+      (currentUserType && user?.type && currentUserType === user.type)
   );
 
   const { showChat, chatId, chatLoading, initiateChat, closeChat } = useChat({
     currentUserId,
-    product: products.length > 0
-      ? {
-          id: products[0].id,
-          type: user?.type === 'Farmer' ? 'sell' : 'buy',
-          farmer: user?.type === 'Farmer' ? { id: user.id } : undefined,
-          buyer: user?.type === 'Buyer' ? { id: user.id } : undefined,
-        }
-      : null,
+    product:
+      products.length > 0
+        ? {
+            id: products[0].id,
+            type: user?.type === "Farmer" ? "sell" : "buy",
+            farmer: user?.type === "Farmer" ? { id: user.id } : undefined,
+            buyer: user?.type === "Buyer" ? { id: user.id } : undefined,
+          }
+        : null,
     disableChat,
   });
 
@@ -253,14 +281,17 @@ const UserProfile: React.FC = () => {
   }, [showChat, closeChat, initiateChat]);
 
   const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = product.name
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
     const matchesCategory =
-      activeCategory === 'All Products' ||
+      activeCategory === "All Products" ||
       product.category.toLowerCase() === activeCategory.toLowerCase();
     return matchesSearch && matchesCategory;
   });
 
-  if (!user) return <div className="text-center py-12 text-gray-500">Loading...</div>;
+  if (!user)
+    return <div className="text-center py-12 text-gray-500">Loading...</div>;
 
   return (
     <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
@@ -269,13 +300,15 @@ const UserProfile: React.FC = () => {
           <div className="flex flex-col sm:flex-row items-start justify-between gap-6">
             <div className="flex items-center space-x-6 w-full sm:w-auto">
               <img
-                src={user.image || 'https://via.placeholder.com/112'}
+                src={user.image || "https://via.placeholder.com/112"}
                 alt={user.name}
                 className="h-28 w-28 rounded-full object-cover ring-4 ring-emerald-100 transition-transform duration-300 hover:scale-105"
               />
               <div>
                 <div className="flex items-center space-x-3">
-                  <h1 className="text-2xl font-bold text-gray-900">{user.name}</h1>
+                  <h1 className="text-2xl font-bold text-gray-900">
+                    {user.name}
+                  </h1>
                   <span className="px-3 py-1 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800">
                     {user.type}
                   </span>
@@ -286,7 +319,9 @@ const UserProfile: React.FC = () => {
                 </div>
                 <div className="flex items-center mt-2 text-yellow-400">
                   <Star className="h-5 w-5 fill-current" />
-                  <span className="ml-2 text-gray-900 font-medium">{user.rating}</span>
+                  <span className="ml-2 text-gray-900 font-medium">
+                    {user.rating}
+                  </span>
                 </div>
                 <p className="mt-4 text-gray-600 max-w-2xl">{user.about}</p>
               </div>
@@ -308,16 +343,21 @@ const UserProfile: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
           {[
-            { label: 'Member Since', value: new Date(user.memberSince).toLocaleDateString() },
-            { label: 'Total Products', value: user.totalProducts.toString() },
-            { label: 'Total Sales', value: user.totalSales },
+            {
+              label: "Member Since",
+              value: new Date(user.memberSince).toLocaleDateString(),
+            },
+            { label: "Total Products", value: user.totalProducts.toString() },
+            { label: "Total Sales", value: user.totalSales },
           ].map((stat, index) => (
             <div
               key={index}
               className="bg-white rounded-xl shadow-md p-6 transition-all duration-300 hover:shadow-lg hover:scale-105"
             >
               <p className="text-sm font-medium text-gray-500">{stat.label}</p>
-              <p className="mt-2 text-xl font-bold text-emerald-600">{stat.value}</p>
+              <p className="mt-2 text-xl font-bold text-emerald-600">
+                {stat.value}
+              </p>
             </div>
           ))}
         </div>
@@ -331,8 +371,8 @@ const UserProfile: React.FC = () => {
                   onClick={() => setActiveCategory(category)}
                   className={`px-4 py-2 rounded-lg transition-all duration-200 ${
                     activeCategory === category
-                      ? 'bg-emerald-600 text-white shadow-md'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      ? "bg-emerald-600 text-white shadow-md"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                   }`}
                 >
                   {category}
@@ -354,7 +394,7 @@ const UserProfile: React.FC = () => {
                 <select
                   className="appearance-none bg-white border border-gray-200 rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200"
                   onChange={(e) => {
-                    console.log('Sort by:', e.target.value);
+                    console.log("Sort by:", e.target.value);
                   }}
                 >
                   <option value="latest">Latest</option>
@@ -377,18 +417,21 @@ const UserProfile: React.FC = () => {
                 name={product.name}
                 price={product.price}
                 quantity={product.quantity}
-                image={product.image || 'https://via.placeholder.com/112'}
+                image={product.image || "https://via.placeholder.com/112"}
                 rating={product.rating}
                 seller={{
                   id: product.seller.id,
                   name: product.seller.name,
-                  image: product.seller.image || 'https://via.placeholder.com/112',
+                  image:
+                    product.seller.image || "https://via.placeholder.com/112",
                 }}
                 currentUserId={product.currentUserId}
               />
             ))
           ) : (
-            <p className="col-span-full text-center text-gray-500">No products found.</p>
+            <p className="col-span-full text-center text-gray-500">
+              No products found.
+            </p>
           )}
         </div>
 
@@ -396,7 +439,7 @@ const UserProfile: React.FC = () => {
           <ChatWindow
             chatId={chatId}
             currentUserId={currentUserId}
-            otherUser={{ name: user.name, image: user.image || '' }}
+            otherUser={{ name: user.name, image: user.image || "" }}
             productId={products.length > 0 ? products[0].id : null}
             onClose={closeChat}
           />
