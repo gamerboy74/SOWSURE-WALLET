@@ -143,6 +143,7 @@ interface Product {
   status: string;
   location: string;
   created_at: string;
+  featured: boolean;
 }
 
 interface ProductFormData {

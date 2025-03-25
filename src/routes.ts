@@ -8,6 +8,7 @@ interface Route {
   key: string;
   isIndex?: boolean;
 }
+
 // Helper function to create lazy-loaded placeholder components
 const createPlaceholder = (name: string) =>
   lazy(() =>
@@ -31,11 +32,7 @@ export const farmerRoutes: Route[] = [
   { path: "/farmer/products", element: lazy(() => import("../client/pages/farmer/Products")), key: "farmer-products" },
   { path: "/farmer/orders", element: lazy(() => import("../client/pages/Orders")), key: "farmer-orders" },
   { path: "/farmer/shipments", element: lazy(() => import("../client/pages/farmer/Shipments")), key: "farmer-shipments" },
-  { path: "/farmer/transactions", element: lazy(() => import("../client/pages/shared/Transactions")), key: "farmer-transactions" },
   { path: "/farmer/analytics", element: lazy(() => import("../client/pages/farmer/FarmerAnalytics")), key: "farmer-analytics" },
-  { path: "/farmer/messages", element: lazy(() => import("../client/pages/shared/Messages")), key: "farmer-messages" },
-  { path: "/farmer/notifications", element: lazy(() => import("../client/pages/shared/Notifications")), key: "farmer-notifications" },
-  { path: "/farmer/settings", element: lazy(() => import("../client/pages/shared/Settings")), key: "farmer-settings" },
 ];
 
 // Buyer Routes
@@ -46,11 +43,7 @@ export const buyerRoutes: Route[] = [
   { path: "/buyer/contracts", element: createPlaceholder("Contracts"), key: "buyer-contracts" },
   { path: "/buyer/farmers", element: createPlaceholder("Farmers"), key: "buyer-farmers" },
   { path: "/buyer/wallet", element: lazy(() => import("../client/pages/wallet/WalletDashboard")), key: "wallet" },
-  { path: "/buyer/transactions", element: lazy(() => import("../client/pages/shared/Transactions")), key: "buyer-transactions" },
   { path: "/buyer/analytics", element: lazy(() => import("../client/pages/buyer/BuyerAnalytics")), key: "buyer-analytics" },
-  { path: "/buyer/messages", element: lazy(() => import("../client/pages/shared/Messages")), key: "buyer-messages" },
-  { path: "/buyer/notifications", element: lazy(() => import("../client/pages/shared/Notifications")), key: "buyer-notifications" },
-  { path: "/buyer/settings", element: lazy(() => import("../client/pages/shared/Settings")), key: "buyer-settings" },
 ];
 
 // Shared Routes
@@ -60,6 +53,10 @@ export const sharedRoutes: Route[] = [
   { path: "/product/:id", element: lazy(() => import("../client/pages/ProductDetails")), key: "product-details" },
   { path: "/:userType/wallet", element: lazy(() => import("../client/pages/wallet/WalletDashboard")), key: "wallet-dashboard" },
   { path: "/wallet/dashboard", element: lazy(() => import("../client/pages/wallet/WalletDashboard")), key: "wallet-dashboard-alt" },
+  { path: "/settings", element: lazy(() => import("../client/pages/shared/Settings")), key: "settings" },
+  { path: "/messages", element: lazy(() => import("../client/pages/shared/Messages")), key: "messages" },
+  { path: "/notifications", element: lazy(() => import("../client/pages/shared/Notifications")), key: "notifications" },
+  { path: "/transactions", element: lazy(() => import("../client/pages/shared/Transactions")), key: "transactions" },
 ];
 
 // Admin Routes

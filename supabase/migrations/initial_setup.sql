@@ -647,3 +647,46 @@ CREATE TABLE slides (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+
+
+CREATE TABLE IF NOT EXISTS platform_stats (
+  id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  active_listings INT NOT NULL DEFAULT 0,
+  registered_farmers INT NOT NULL DEFAULT 0,
+  daily_transactions DECIMAL(15, 2) NOT NULL DEFAULT 0.0,
+  verified_buyers INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE platform_stats ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow authenticated read access to platform stats" 
+ON platform_stats 
+FOR SELECT 
+TO authenticated 
+USING (true);
+
+CREATE POLICY "Allow admin write access to platform stats" 
+ON platform_stats 
+FOR ALL 
+TO authenticated 
+USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid())) 
+WITH CHECK (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+CREATE OR REPLACE FUNCTION update_platform_stats_timestamp() 
+RETURNS TRIGGER AS $$ 
+BEGIN 
+  NEW.updated_at = now(); 
+  RETURN NEW; 
+END; $$ 
+LANGUAGE plpgsql;
+
+CREATE TRIGGER update_platform_stats_timestamp 
+BEFORE UPDATE ON platform_stats 
+FOR EACH ROW 
+EXECUTE FUNCTION update_platform_stats_timestamp();
+
+INSERT INTO platform_stats (id, active_listings, registered_farmers, daily_transactions, verified_buyers) 
+VALUES (1, 2500, 1200, 500000, 500) 
+ON CONFLICT (id) DO NOTHING;

@@ -34,7 +34,9 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const location = useLocation();
 
+  // Hide sidebar on login/register pages or if userType is undefined
   if (
+    !userType ||
     location.pathname.includes("/login") ||
     location.pathname.includes("/register")
   ) {
@@ -47,11 +49,11 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
     { icon: Package, label: "Orders", path: "/farmer/orders" },
     { icon: Truck, label: "Shipments", path: "/farmer/shipments" },
     { icon: Wallet, label: "Wallet", path: "/farmer/wallet" },
-    { icon: History, label: "Transaction History", path: "/farmer/transactions" },
+    { icon: History, label: "Transaction History", path: "/transactions" },
     { icon: BarChart2, label: "Analytics", path: "/farmer/analytics" },
-    { icon: MessageSquare, label: "Messages", path: "/farmer/messages" },
-    { icon: Bell, label: "Notifications", path: "/farmer/notifications" },
-    { icon: Settings, label: "Settings", path: "/farmer/settings" },
+    { icon: MessageSquare, label: "Messages", path: "/messages" },
+    { icon: Bell, label: "Notifications", path: "/notifications" },
+    { icon: Settings, label: "Settings", path: "/settings" },
   ];
 
   const buyerMenuItems: MenuItem[] = [
@@ -61,10 +63,10 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
     { icon: FileText, label: "Contracts", path: "/buyer/contracts" },
     { icon: Sprout, label: "Farmers", path: "/buyer/farmers" },
     { icon: Wallet, label: "Wallet", path: "/buyer/wallet" },
-    { icon: History, label: "Transaction History", path: "/buyer/transactions" },
-    { icon: MessageSquare, label: "Messages", path: "/farmer/messages" },
-    { icon: Bell, label: "Notifications", path: "/farmer/notifications" },
-    { icon: Settings, label: "Settings", path: "/farmer/settings" },
+    { icon: History, label: "Transaction History", path: "/transactions" },
+    { icon: MessageSquare, label: "Messages", path: "/messages" },
+    { icon: Bell, label: "Notifications", path: "/notifications" },
+    { icon: Settings, label: "Settings", path: "/settings" },
   ];
 
   const menuItems = userType === "farmer" ? farmerMenuItems : buyerMenuItems;
@@ -73,19 +75,18 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
     <aside
       className={`fixed left-0 bg-white shadow-md transition-all duration-300 z-50 ${
         isExpanded ? "w-52" : "w-12"
-      } ${className} md:hover:w-52`} // Hover behavior on md and above
+      } ${className} md:hover:w-52`}
       style={{
         top: "64px",
         height: "calc(100vh - 64px)",
       }}
       onMouseEnter={(e) => {
-        if (window.innerWidth >= 768) setIsExpanded(true); // Hover only on md and above
+        if (window.innerWidth >= 768) setIsExpanded(true);
       }}
       onMouseLeave={(e) => {
-        if (window.innerWidth >= 768) setIsExpanded(false); // Hover only on md and above
+        if (window.innerWidth >= 768) setIsExpanded(false);
       }}
     >
-      {/* Toggle button visible only on small screens */}
       <div className="flex justify-end p-2 md:hidden">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
@@ -118,7 +119,7 @@ const Sidebar: React.FC<SidebarProps> = ({ className = "", userType }) => {
               <span
                 className={`ml-3 text-sm whitespace-nowrap overflow-hidden transition-all duration-300 ${
                   isExpanded ? "opacity-100 w-auto" : "opacity-0 w-0"
-                } md:opacity-100 md:w-auto`} // Always show labels on hover for md and above
+                } md:opacity-100 md:w-auto`}
               >
                 {item.label}
               </span>

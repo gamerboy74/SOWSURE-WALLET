@@ -97,7 +97,10 @@ const Settings: React.FC = () => {
         error: authError,
       } = await supabase.auth.getUser();
       if (authError) throw authError;
-      if (!user) return navigate("/");
+      if (!user) {
+        setError("You must be logged in to view settings.");
+        return; // Avoid redirecting
+      }
 
       const [farmerResult, buyerResult] = await Promise.all([
         supabase
@@ -113,9 +116,12 @@ const Settings: React.FC = () => {
       ]);
 
       const profileData = farmerResult.data || buyerResult.data;
-      const userType = farmerResult.data ? "farmer" : "buyer";
+      const userType = farmerResult.data ? "farmer" : buyerResult.data ? "buyer" : null;
 
-      if (!profileData) throw new Error("No profile found");
+      if (!profileData) {
+        setError("No profile found. Please complete your profile setup.");
+        return;
+      }
 
       setUserProfile({ user_type: userType, profile: profileData });
       setImagePreview(profileData.profile_photo_url);
@@ -134,9 +140,7 @@ const Settings: React.FC = () => {
 
       if (notificationData) {
         setNotificationSettings({
-          email_notifications: notificationData.some(
-            (n) => n.type === "system"
-          ),
+          email_notifications: notificationData.some((n) => n.type === "system"),
           push_notifications: notificationData.some((n) => n.type === "alert"),
           sms_notifications: notificationData.some((n) => n.type === "message"),
         });
@@ -172,35 +176,22 @@ const Settings: React.FC = () => {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
       let profilePhotoUrl = userProfile.profile?.profile_photo_url;
       const bucket =
-        userProfile.user_type === "farmer"
-          ? "farmer-documents"
-          : "buyer-documents";
+        userProfile.user_type === "farmer" ? "farmer-documents" : "buyer-documents";
 
       if (selectedImage && userProfile.profile?.user_id) {
-        // Remove old photo if it exists and isn't a blob URL
         if (profilePhotoUrl && !profilePhotoUrl.startsWith("blob:")) {
-          const oldPath = profilePhotoUrl.split(
-            `/storage/v1/object/public/${bucket}/`
-          )[1];
+          const oldPath = profilePhotoUrl.split(`/storage/v1/object/public/${bucket}/`)[1];
           if (oldPath) {
-            await fetch(
-              `${SUPABASE_URL}/storage/v1/object/${bucket}/${oldPath}`,
-              {
-                method: "DELETE",
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                },
-              }
-            );
+            await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${oldPath}`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
           }
         }
 
-        // Upload new photo using fetch
         const formData = new FormData();
         const fileExt = selectedImage.name.split(".").pop();
-        const fileName = `${
-          userProfile.profile.user_id
-        }-${Date.now()}.${fileExt}`;
+        const fileName = `${userProfile.profile.user_id}-${Date.now()}.${fileExt}`;
         const filePath = `profile-photos/${fileName}`;
         formData.append("file", selectedImage, fileName);
 
@@ -208,16 +199,12 @@ const Settings: React.FC = () => {
           `${SUPABASE_URL}/storage/v1/object/${bucket}/${filePath}`,
           {
             method: "POST",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
+            headers: { Authorization: `Bearer ${accessToken}` },
             body: formData,
           }
         );
 
-        if (!uploadResponse.ok) {
-          throw new Error("Failed to upload image");
-        }
+        if (!uploadResponse.ok) throw new Error("Failed to upload image");
 
         profilePhotoUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${filePath}`;
       }
@@ -264,7 +251,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  const onSecuritySubmit: SubmitHandler<SecurityFormData> = async (data) => {
+  const onSecuritySubmit: SubmitHandler<SecurityFormData> = async (data) =>{
     setLoading(true);
     setError(null);
 
@@ -284,9 +271,7 @@ const Settings: React.FC = () => {
       resetSecurity();
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to update password"
-      );
+      setError(err instanceof Error ? err.message : "Failed to update password");
     } finally {
       setLoading(false);
     }
@@ -298,9 +283,7 @@ const Settings: React.FC = () => {
   ) => {
     setNotificationSettings((prev) => ({ ...prev, [type]: value }));
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.from("notifications").upsert({
           user_id: user.id,
@@ -424,67 +407,33 @@ const Settings: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {[
                       { id: "name", label: "Name", required: true },
-                      {
-                        id: "email",
-                        label: "Email",
-                        required: true,
-                        disabled: true,
-                      },
-                      {
-                        id: "phone_number",
-                        label: "Phone Number",
-                        required: true,
-                        pattern: /^[0-9]{10}$/,
-                      },
-                      {
-                        id: "address",
-                        label:
-                          userProfile.user_type === "farmer"
-                            ? "Address"
-                            : "Business Address",
-                        required: true,
-                      },
-                      ...(userProfile.user_type === "buyer"
-                        ? [
-                            {
-                              id: "entity_name",
-                              label: "Company Name",
-                              required: true,
-                            },
-                          ]
-                        : []),
+                      { id: "email", label: "Email", required: true, disabled: true },
+                      { id: "phone_number", label: "Phone Number", required: true, pattern: /^[0-9]{10}$/ },
+                      { id: "address", label: userProfile.user_type === "farmer" ? "Address" : "Business Address", required: true },
+                      ...(userProfile.user_type === "buyer" ? [{ id: "entity_name", label: "Company Name", required: true }] : []),
                     ].map((field) => (
                       <div key={field.id}>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           {field.label}
                         </label>
                         <input
-                          {...registerProfile(
-                            field.id as keyof ProfileFormData,
-                            {
-                              required:
-                                field.required && `${field.label} is required`,
-                              ...(field.pattern && {
-                                pattern: {
-                                  value: field.pattern,
-                                  message: `Invalid ${field.label.toLowerCase()}`,
-                                },
-                              }),
-                            }
-                          )}
+                          {...registerProfile(field.id as keyof ProfileFormData, {
+                            required: field.required && `${field.label} is required`,
+                            ...(field.pattern && {
+                              pattern: {
+                                value: field.pattern,
+                                message: `Invalid ${field.label.toLowerCase()}`,
+                              },
+                            }),
+                          })}
                           disabled={!isEditing || field.disabled}
                           className={`w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-100 disabled:cursor-not-allowed transition-colors ${
-                            profileErrors[field.id as keyof ProfileFormData]
-                              ? "border-red-500"
-                              : ""
+                            profileErrors[field.id as keyof ProfileFormData] ? "border-red-500" : ""
                           }`}
                         />
                         {profileErrors[field.id as keyof ProfileFormData] && (
                           <p className="text-red-500 text-sm mt-1">
-                            {
-                              profileErrors[field.id as keyof ProfileFormData]
-                                ?.message
-                            }
+                            {profileErrors[field.id as keyof ProfileFormData]?.message}
                           </p>
                         )}
                       </div>
@@ -530,46 +479,20 @@ const Settings: React.FC = () => {
               </h2>
               <div className="space-y-6">
                 {[
-                  {
-                    key: "email_notifications",
-                    label: "Email Notifications",
-                    desc: "Receive updates via email",
-                  },
-                  {
-                    key: "push_notifications",
-                    label: "Push Notifications",
-                    desc: "Receive notifications in browser",
-                  },
-                  {
-                    key: "sms_notifications",
-                    label: "SMS Notifications",
-                    desc: "Receive updates via SMS",
-                  },
+                  { key: "email_notifications", label: "Email Notifications", desc: "Receive updates via email" },
+                  { key: "push_notifications", label: "Push Notifications", desc: "Receive notifications in browser" },
+                  { key: "sms_notifications", label: "SMS Notifications", desc: "Receive updates via SMS" },
                 ].map((item) => (
-                  <div
-                    key={item.key}
-                    className="flex items-center justify-between py-2"
-                  >
+                  <div key={item.key} className="flex items-center justify-between py-2">
                     <div>
-                      <h3 className="text-sm font-medium text-gray-900">
-                        {item.label}
-                      </h3>
+                      <h3 className="text-sm font-medium text-gray-900">{item.label}</h3>
                       <p className="text-sm text-gray-500">{item.desc}</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={
-                          notificationSettings[
-                            item.key as keyof NotificationSettings
-                          ]
-                        }
-                        onChange={(e) =>
-                          handleNotificationChange(
-                            item.key as keyof NotificationSettings,
-                            e.target.checked
-                          )
-                        }
+                        checked={notificationSettings[item.key as keyof NotificationSettings]}
+                        onChange={(e) => handleNotificationChange(item.key as keyof NotificationSettings, e.target.checked)}
                         className="sr-only peer"
                       />
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
@@ -581,14 +504,9 @@ const Settings: React.FC = () => {
           )}
 
           {activeTab === "security" && (
-            <form
-              onSubmit={handleSecuritySubmit(onSecuritySubmit)}
-              className="space-y-6"
-            >
+            <form onSubmit={handleSecuritySubmit(onSecuritySubmit)} className="space-y-6">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  Security Settings
-                </h2>
+                <h2 className="text-xl font-semibold text-gray-900">Security Settings</h2>
                 {!isEditing && (
                   <button
                     onClick={() => setIsEditing(true)}
@@ -606,33 +524,23 @@ const Settings: React.FC = () => {
                   { id: "confirm_password", label: "Confirm New Password" },
                 ].map((field) => (
                   <div key={field.id}>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {field.label}
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{field.label}</label>
                     <input
                       type="password"
                       {...registerSecurity(field.id as keyof SecurityFormData, {
                         required: `${field.label} is required`,
                         ...(field.minLength && {
-                          minLength: {
-                            value: field.minLength,
-                            message: "Minimum 8 characters",
-                          },
+                          minLength: { value: field.minLength, message: "Minimum 8 characters" },
                         }),
                       })}
                       disabled={!isEditing}
                       className={`w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 disabled:bg-gray-100 disabled:cursor-not-allowed ${
-                        securityErrors[field.id as keyof SecurityFormData]
-                          ? "border-red-500"
-                          : ""
+                        securityErrors[field.id as keyof SecurityFormData] ? "border-red-500" : ""
                       }`}
                     />
                     {securityErrors[field.id as keyof SecurityFormData] && (
                       <p className="text-red-500 text-sm mt-1">
-                        {
-                          securityErrors[field.id as keyof SecurityFormData]
-                            ?.message
-                        }
+                        {securityErrors[field.id as keyof SecurityFormData]?.message}
                       </p>
                     )}
                   </div>
@@ -669,26 +577,17 @@ const Settings: React.FC = () => {
 
           {activeTab === "privacy" && (
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Privacy Settings
-              </h2>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">Privacy Settings</h2>
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-900">
-                      Profile Visibility
-                    </h3>
-                    <p className="text-sm text-gray-500">
-                      Control who can see your profile
-                    </p>
+                    <h3 className="text-sm font-medium text-gray-900">Profile Visibility</h3>
+                    <p className="text-sm text-gray-500">Control who can see your profile</p>
                   </div>
                   <select
                     value={privacySettings.profile_visibility}
                     onChange={(e) =>
-                      handlePrivacyChange(
-                        "profile_visibility",
-                        e.target.value as "public" | "private" | "verified"
-                      )
+                      handlePrivacyChange("profile_visibility", e.target.value as "public" | "private" | "verified")
                     }
                     className="rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500"
                   >
@@ -698,39 +597,19 @@ const Settings: React.FC = () => {
                   </select>
                 </div>
                 {[
-                  {
-                    key: "show_contact_info",
-                    label: "Contact Information",
-                    desc: "Show contact info to other users",
-                  },
-                  {
-                    key: "show_activity_status",
-                    label: "Activity Status",
-                    desc: "Show when you're online",
-                  },
+                  { key: "show_contact_info", label: "Contact Information", desc: "Show contact info to other users" },
+                  { key: "show_activity_status", label: "Activity Status", desc: "Show when you're online" },
                 ].map((item) => (
-                  <div
-                    key={item.key}
-                    className="flex items-center justify-between py-2"
-                  >
+                  <div key={item.key} className="flex items-center justify-between py-2">
                     <div>
-                      <h3 className="text-sm font-medium text-gray-900">
-                        {item.label}
-                      </h3>
+                      <h3 className="text-sm font-medium text-gray-900">{item.label}</h3>
                       <p className="text-sm text-gray-500">{item.desc}</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={
-                          privacySettings[item.key as keyof PrivacySettings]
-                        }
-                        onChange={(e) =>
-                          handlePrivacyChange(
-                            item.key as keyof PrivacySettings,
-                            e.target.checked
-                          )
-                        }
+                        checked={privacySettings[item.key as 'show_contact_info' | 'show_activity_status']}
+                        onChange={(e) => handlePrivacyChange(item.key as keyof PrivacySettings, e.target.checked)}
                         className="sr-only peer"
                       />
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>

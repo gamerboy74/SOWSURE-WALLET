@@ -13,11 +13,21 @@ const ProtectedRoute = ({ userTypeRequired, element, redirectTo }: ProtectedRout
   const isAuthenticated = !!user;
   const userType = user?.user_metadata?.type as "farmer" | "buyer" | undefined;
 
-  return isAuthenticated && (!userTypeRequired || userType === userTypeRequired) ? (
-    element
-  ) : (
-    <Navigate to="/farmer/login" />
-  );
+  // Debugging logs
+  console.log("ProtectedRoute - isAuthenticated:", isAuthenticated);
+  console.log("ProtectedRoute - userType:", userType);
+  console.log("ProtectedRoute - userTypeRequired:", userTypeRequired);
+  console.log("ProtectedRoute - redirectTo:", redirectTo);
+
+  if (!isAuthenticated) {
+    return <Navigate to={redirectTo} replace />;
+  }
+
+  if (userTypeRequired && userType !== userTypeRequired) {
+    return <Navigate to={redirectTo} replace />;
+  }
+
+  return element;
 };
 
 export default ProtectedRoute;

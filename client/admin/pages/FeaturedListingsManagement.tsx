@@ -95,6 +95,7 @@ const FeaturedListingsManagement: React.FC = () => {
             onDelete={() => handleDelete(product.id)}
             deleting={deleting}
             handleImageError={handleImageError}
+            isAdmin={true} // Add this to enable admin view
           />
         ))}
       </div>

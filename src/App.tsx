@@ -38,13 +38,11 @@ const MainLayout = memo(({ isAuthenticated, userType }: MainLayoutProps) => {
         </Suspense>
       )}
       <div className="flex-1 flex flex-col transition-all duration-300 ease-in-out">
-        {/* Ensure Navbar container spans full width */}
         <Suspense fallback={<LoadingSpinner />}>
           <div className="sticky top-0 z-50 backdrop-blur-sm bg-white/75 shadow-sm w-full">
             <Navbar isAuthenticated={isAuthenticated} />
           </div>
         </Suspense>
-        {/* Adjusted margin to only account for sidebar's collapsed width */}
         <div
           className={`flex-grow p-4 md:p-6 lg:p-8 ${
             isAuthenticated ? "ml-12" : ""
@@ -187,7 +185,7 @@ const AppContent: React.FC = () => {
               element={
                 <ProtectedRoute
                   element={<route.element />}
-                  redirectTo={route.path.includes("wallet") ? "/login" : "/"}
+                  redirectTo={userType ? `/${userType}/login` : "/farmer/login"}
                 />
               }
               key={route.key}

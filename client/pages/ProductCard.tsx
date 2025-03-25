@@ -25,6 +25,7 @@ interface ProductCardProps {
   onDelete: () => void;
   deleting: string | null;
   handleImageError: () => void;
+  isAdmin?: boolean; // New prop to determine if it's admin view
 }
 
 const ProductCard: React.FC<ProductCardProps> = ({
@@ -33,6 +34,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
   onDelete,
   deleting,
   handleImageError,
+  isAdmin = false, // Default to false (non-admin view)
 }) => {
   return (
     <div className="product-card bg-white rounded-xl shadow-sm overflow-hidden border border-gray-100">
@@ -98,7 +100,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
             onClick={() => onEdit(product)}
             className="button-transition flex-1 bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700 text-sm font-medium"
           >
-            {product.featured ? "Unfeature" : "Feature"}
+            {isAdmin ? (product.featured ? "Unfeature" : "Feature") : "Edit"}
           </button>
           <button
             onClick={onDelete}
