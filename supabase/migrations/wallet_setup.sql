@@ -308,3 +308,400 @@ ALTER TABLE wallets
   ADD CONSTRAINT unique_user_id UNIQUE (user_id);
 
  ALTER TABLE wallets ADD COLUMN token_type TEXT;
+
+
+
+ ALTER TABLE admin_users
+  ADD CONSTRAINT unique_admin_user_id UNIQUE (user_id);
+
+  /*
+  FarmConnect Database Schema Additions for AgriculturalContract Integration
+  - Uses existing wallets table to fetch wallet_address via user_id
+  - Assumes existing tables: farmers, buyers, wallets, wallet_transactions, notifications, products, admin_users
+*/
+/*
+  FarmConnect Database Schema Additions for AgriculturalContract Integration
+  - Uses ETH for transactions (stored and processed in ETH in the backend)
+  - Frontend renders ETH amounts as INR using conversion for display only
+  - Uses existing wallets table to fetch wallet_address via user_id
+  - Assumes existing tables: farmers, buyers, wallets, wallet_transactions, notifications, products, admin_users
+*/
+
+-- Ensure unique constraint on admin_users.user_id (fixes previous error)
+ALTER TABLE admin_users
+  ADD CONSTRAINT unique_admin_user_id UNIQUE (user_id);
+
+-- Smart Contracts Table (Updated for ETH)
+CREATE TABLE IF NOT EXISTS smart_contracts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id BIGINT NOT NULL UNIQUE, -- Maps to contractCounter in smart contract
+  farmer_id UUID REFERENCES farmers(id) ON DELETE CASCADE,
+  buyer_id UUID REFERENCES buyers(id) ON DELETE CASCADE,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  crop_name TEXT NOT NULL,
+  quantity NUMERIC NOT NULL CHECK (quantity > 0),
+  amount_eth DECIMAL(20,8) NOT NULL CHECK (amount_eth > 0), -- ETH instead of USDT
+  advance_amount_eth DECIMAL(20,8) DEFAULT 0 CHECK (advance_amount_eth >= 0), -- ETH instead of USDT
+  start_date TIMESTAMPTZ NOT NULL,
+  end_date TIMESTAMPTZ NOT NULL,
+  delivery_method TEXT,
+  delivery_location TEXT,
+  additional_notes TEXT,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'FUNDED', 'IN_PROGRESS', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED')),
+  escrow_balance_eth DECIMAL(20,8) DEFAULT 0 CHECK (escrow_balance_eth >= 0), -- ETH instead of USDT
+  farmer_confirmed_delivery BOOLEAN DEFAULT false,
+  buyer_confirmed_receipt BOOLEAN DEFAULT false,
+  is_buyer_initiated BOOLEAN DEFAULT false,
+  blockchain_tx_hash TEXT,
+  contract_address TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE smart_contracts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own contracts" ON smart_contracts 
+  FOR SELECT TO authenticated 
+  USING (
+    farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+    buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+  );
+CREATE POLICY "Users can insert own contracts" ON smart_contracts 
+  FOR INSERT TO authenticated 
+  WITH CHECK (
+    farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+    buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+  );
+CREATE POLICY "Users can update own contracts" ON smart_contracts 
+  FOR UPDATE TO authenticated 
+  USING (
+    farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid()) OR
+    buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+  );
+CREATE POLICY "Admins can view all contracts" ON smart_contracts 
+  FOR SELECT TO authenticated 
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Contract Events Table (No monetary fields, unchanged)
+CREATE TABLE IF NOT EXISTS contract_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE CASCADE,
+  event_name TEXT NOT NULL CHECK (event_name IN ('ContractCreated', 'ContractStatusUpdated', 'FundsDeposited', 'FundsReleased', 'DisputeRaised', 'PlatformFeesWithdrawn')),
+  event_data JSONB NOT NULL,
+  tx_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE contract_events ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own contract events" ON contract_events 
+  FOR SELECT TO authenticated 
+  USING (
+    contract_id IN (
+      SELECT contract_id FROM smart_contracts
+      WHERE farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid())
+         OR buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+    )
+  );
+CREATE POLICY "Admins can view all contract events" ON contract_events 
+  FOR SELECT TO authenticated 
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Platform Fees Table (Updated for ETH)
+CREATE TABLE IF NOT EXISTS platform_fees (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE SET NULL,
+  amount_eth DECIMAL(20,8) NOT NULL CHECK (amount_eth > 0), -- ETH instead of USDT
+  collected_at TIMESTAMPTZ DEFAULT NOW(),
+  withdrawn_at TIMESTAMPTZ,
+  withdrawn_to_wallet TEXT,
+  tx_hash TEXT
+);
+
+ALTER TABLE platform_fees ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admins can manage platform fees" ON platform_fees 
+  FOR ALL TO authenticated 
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid())) 
+  WITH CHECK (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Disputes Table (No monetary fields, unchanged)
+CREATE TABLE IF NOT EXISTS disputes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE CASCADE UNIQUE,
+  raised_by UUID REFERENCES auth.users(id),
+  reason TEXT NOT NULL,
+  status TEXT DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'RESOLVED', 'REJECTED')),
+  resolution TEXT,
+  resolved_by UUID REFERENCES admin_users(user_id),
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE disputes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own disputes" ON disputes 
+  FOR SELECT TO authenticated 
+  USING (
+    contract_id IN (
+      SELECT contract_id FROM smart_contracts
+      WHERE farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid())
+         OR buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+    )
+  );
+CREATE POLICY "Users can raise own disputes" ON disputes 
+  FOR INSERT TO authenticated 
+  WITH CHECK (
+    contract_id IN (
+      SELECT contract_id FROM smart_contracts
+      WHERE farmer_id IN (SELECT id FROM farmers WHERE user_id = auth.uid())
+         OR buyer_id IN (SELECT id FROM buyers WHERE user_id = auth.uid())
+    )
+  );
+CREATE POLICY "Admins can manage disputes" ON disputes 
+  FOR ALL TO authenticated 
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid())) 
+  WITH CHECK (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Alter Existing Tables (Minimal changes for ETH)
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS contract_id BIGINT;
+
+ALTER TABLE wallet_transactions
+  ADD COLUMN IF NOT EXISTS contract_id BIGINT;
+
+ALTER TABLE notifications
+  ADD COLUMN IF NOT EXISTS contract_id BIGINT;
+
+-- Sync Functions Using Wallets Table (Updated for ETH, no INR in backend)
+CREATE OR REPLACE FUNCTION sync_buyer_contract_creation(
+  p_contract_id BIGINT,
+  p_buyer_id UUID,
+  p_crop_name TEXT,
+  p_quantity NUMERIC,
+  p_amount_eth DECIMAL, -- ETH stored in backend
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ,
+  p_delivery_method TEXT,
+  p_delivery_location TEXT,
+  p_additional_notes TEXT,
+  p_tx_hash TEXT,
+  p_contract_address TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_advance_amount_eth DECIMAL(20,8) := (p_amount_eth * 0.20); -- 20% advance in ETH
+BEGIN
+  INSERT INTO smart_contracts (
+    contract_id, buyer_id, crop_name, quantity, amount_eth, advance_amount_eth,
+    start_date, end_date, delivery_method, delivery_location, additional_notes,
+    status, escrow_balance_eth, is_buyer_initiated, blockchain_tx_hash, contract_address,
+    created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_buyer_id, p_crop_name, p_quantity, p_amount_eth, v_advance_amount_eth,
+    p_start_date, p_end_date, p_delivery_method, p_delivery_location, p_additional_notes,
+    'PENDING', p_amount_eth, true, p_tx_hash, p_contract_address, NOW(), NOW()
+  );
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH', -- ETH
+    jsonb_build_object('note', 'Buyer contract funding', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  WHERE b.id = p_buyer_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Buy Contract Created',
+    'Your contract #' || p_contract_id || ' for ' || p_crop_name || ' has been created and funded.', -- INR conversion on frontend
+    'order', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', p_amount_eth), NOW()
+  FROM buyers b
+  WHERE b.id = p_buyer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION sync_farmer_acceptance(
+  p_contract_id BIGINT,
+  p_farmer_id UUID,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_advance_amount_eth DECIMAL(20,8);
+BEGIN
+  SELECT advance_amount_eth INTO v_advance_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET farmer_id = p_farmer_id,
+      status = 'FUNDED',
+      escrow_balance_eth = escrow_balance_eth - v_advance_amount_eth, -- ETH
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, v_advance_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH', -- ETH
+    jsonb_build_object('note', 'Advance payment for contract acceptance', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  WHERE f.id = p_farmer_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    f.user_id, p_contract_id, 'Contract Accepted',
+    'You accepted contract #' || p_contract_id || ' and received an advance.', -- INR conversion on frontend
+    'order', jsonb_build_object('contract_id', p_contract_id, 'advance_amount_eth', v_advance_amount_eth), NOW()
+  FROM farmers f
+  WHERE f.id = p_farmer_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Contract Accepted',
+    'A farmer accepted your contract #' || p_contract_id || '.',
+    'order', jsonb_build_object('contract_id', p_contract_id), NOW()
+  FROM buyers b
+  JOIN smart_contracts sc ON sc.buyer_id = b.id
+  WHERE sc.contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION sync_sell_contract_creation(
+  p_contract_id BIGINT,
+  p_farmer_id UUID,
+  p_crop_name TEXT,
+  p_quantity NUMERIC,
+  p_amount_eth DECIMAL, -- ETH
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ,
+  p_delivery_method TEXT,
+  p_delivery_location TEXT,
+  p_additional_notes TEXT,
+  p_tx_hash TEXT,
+  p_contract_address TEXT
+) RETURNS VOID AS $$
+BEGIN
+  INSERT INTO smart_contracts (
+    contract_id, farmer_id, crop_name, quantity, amount_eth, start_date, end_date,
+    delivery_method, delivery_location, additional_notes, status, escrow_balance_eth,
+    is_buyer_initiated, blockchain_tx_hash, contract_address, created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_farmer_id, p_crop_name, p_quantity, p_amount_eth, p_start_date, p_end_date,
+    p_delivery_method, p_delivery_location, p_additional_notes, 'PENDING', 0,
+    false, p_tx_hash, p_contract_address, NOW(), NOW()
+  );
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    f.user_id, p_contract_id, 'Sell Contract Created',
+    'Your contract #' || p_contract_id || ' for ' || p_crop_name || ' has been created.',
+    'order', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', p_amount_eth), NOW()
+  FROM farmers f
+  WHERE f.id = p_farmer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION sync_sell_contract_acceptance(
+  p_contract_id BIGINT,
+  p_buyer_id UUID,
+  p_amount_eth DECIMAL, -- ETH
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  UPDATE smart_contracts
+  SET buyer_id = p_buyer_id,
+      status = 'FUNDED',
+      escrow_balance_eth = p_amount_eth, -- ETH
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH', -- ETH
+    jsonb_build_object('note', 'Sell contract funding on acceptance', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  WHERE b.id = p_buyer_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Contract Funded',
+    'Your contract #' || p_contract_id || ' has been funded.', -- INR conversion on frontend
+    'payment', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', p_amount_eth), NOW()
+  FROM buyers b
+  WHERE b.id = p_buyer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Update Wallet Balance Function for ETH
+CREATE OR REPLACE FUNCTION update_wallet_balance()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status = 'COMPLETED' AND NEW.token_type = 'ETH' THEN
+    IF NEW.type = 'DEPOSIT' THEN
+      UPDATE wallets 
+      SET balance = balance + NEW.amount,
+          updated_at = NOW()
+      WHERE id = NEW.wallet_id;
+    ELSIF NEW.type IN ('WITHDRAWAL', 'TRANSFER') THEN
+      IF (SELECT balance FROM wallets WHERE id = NEW.wallet_id) >= NEW.amount THEN
+        UPDATE wallets 
+        SET balance = balance - NEW.amount,
+            updated_at = NOW()
+        WHERE id = NEW.wallet_id;
+      ELSE
+        NEW.status := 'FAILED';
+        NEW.metadata := NEW.metadata || jsonb_build_object('error', 'Insufficient ETH balance');
+        RAISE NOTICE 'Insufficient ETH balance for transaction on wallet %', NEW.wallet_id;
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    NEW.status := 'FAILED';
+    NEW.metadata := NEW.metadata || jsonb_build_object('error', SQLERRM);
+    RAISE NOTICE 'Transaction failed for wallet %: %', NEW.wallet_id, SQLERRM;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for Timestamp Updates
+CREATE OR REPLACE FUNCTION update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_smart_contracts_timestamp
+  BEFORE UPDATE ON smart_contracts
+  FOR EACH ROW
+  EXECUTE FUNCTION update_timestamp();
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_smart_contracts_contract_id ON smart_contracts(contract_id);
+CREATE INDEX IF NOT EXISTS idx_contract_events_contract_id ON contract_events(contract_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_contract_id ON wallet_transactions(contract_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_contract_id ON notifications(contract_id);
+CREATE INDEX IF NOT EXISTS idx_products_contract_id ON products(contract_id);

@@ -305,10 +305,10 @@ function ProductDetails() {
               <button
                 className="button-transition w-full flex items-center justify-center px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-md hover:shadow-xl font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={disableButtons}
-                title={disableButtons ? "You cannot submit an offer for this listing" : undefined}
-                aria-label="Submit Offer"
+                title={disableButtons ? "You cannot purchase this listing" : undefined}
+                aria-label="Purchase Now"
               >
-                Submit Offer
+                Purchase Now
               </button>
             </div>
           </div>
