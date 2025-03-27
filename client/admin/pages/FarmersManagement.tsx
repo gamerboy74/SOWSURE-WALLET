@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { supabase, supabaseAdmin } from "../../lib/supabase";
 import { toast, Toaster } from "react-hot-toast";
+import { useNotification } from "../../../src/context/NotificationContext";
 
 interface Farmer {
   id: string;
@@ -81,6 +82,7 @@ const FarmersManagement: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState<Farmer | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const notification = useNotification();
 
   const checkAdminStatus = useCallback(async (): Promise<boolean> => {
     try {
@@ -273,7 +275,7 @@ const FarmersManagement: React.FC = () => {
 
   const handleImport = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
-      if (!isAdmin) return toast.error("Admin privileges required");
+      if (!isAdmin) return notification.error("Admin privileges required");
 
       const file = event.target.files?.[0];
       if (!file) return;
@@ -300,9 +302,11 @@ const FarmersManagement: React.FC = () => {
           .insert(farmersToInsert);
         if (error) throw error;
 
-        toast.success("Farmers imported successfully");
+        notification.success("Farmers imported successfully");
       } catch (err) {
-        toast.error((err as Error).message || "Failed to import farmers");
+        notification.error(
+          (err as Error).message || "Failed to import farmers"
+        );
       }
     },
     [isAdmin]
@@ -310,7 +314,7 @@ const FarmersManagement: React.FC = () => {
 
   const handleEdit = useCallback(
     (farmer: Farmer) => {
-      if (!isAdmin) return toast.error("Admin privileges required");
+      if (!isAdmin) return notification.error("Admin privileges required");
       setEditingFarmer(farmer);
       setImagePreview(farmer.profile_photo_url || PLACEHOLDER_IMAGE);
     },
@@ -334,7 +338,7 @@ const FarmersManagement: React.FC = () => {
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       if (!editingFarmer || !isAdmin)
-        return toast.error("Admin privileges required");
+        return notification.error("Admin privileges required");
 
       try {
         setLoading(true);
@@ -366,12 +370,12 @@ const FarmersManagement: React.FC = () => {
 
         if (error) throw error;
 
-        toast.success(`Updated ${editingFarmer.name}`);
+        notification.success(`Updated ${editingFarmer.name}`);
         setEditingFarmer(null);
         setNewProfileImage(null);
         setImagePreview(null);
       } catch (err) {
-        toast.error((err as Error).message || "Failed to update farmer");
+        notification.error((err as Error).message || "Failed to update farmer");
       } finally {
         setLoading(false);
       }
@@ -380,43 +384,49 @@ const FarmersManagement: React.FC = () => {
   );
 
   const confirmDelete = useCallback(async () => {
-    if (!showDeleteDialog || !isAdmin) return toast.error('Admin privileges required');
-  
+    if (!showDeleteDialog || !isAdmin)
+      return toast.error("Admin privileges required");
+
     try {
       setLoading(true);
-  
+
       // Fetch farmer data
       const { data: farmerData, error: fetchError } = await supabase
-        .from('farmers')
-        .select('user_id, profile_photo_url')
-        .eq('id', showDeleteDialog.id)
+        .from("farmers")
+        .select("user_id, profile_photo_url")
+        .eq("id", showDeleteDialog.id)
         .single();
       if (fetchError) throw fetchError;
-  
+
       // Delete profile photo if exists
       if (farmerData?.profile_photo_url) {
-        const filePath = farmerData.profile_photo_url.split('/farmer-documents/')[1];
-        const { error: removeError } = await supabase.storage.from('farmer-documents').remove([filePath]);
+        const filePath =
+          farmerData.profile_photo_url.split("/farmer-documents/")[1];
+        const { error: removeError } = await supabase.storage
+          .from("farmer-documents")
+          .remove([filePath]);
         if (removeError) throw removeError;
       }
-  
+
       // Delete the farmer record (cascades to chats, messages, products)
       const { error: dbError } = await supabase
-        .from('farmers')
+        .from("farmers")
         .delete()
-        .eq('id', showDeleteDialog.id);
+        .eq("id", showDeleteDialog.id);
       if (dbError) throw dbError;
-  
+
       // Delete the associated auth user if exists
       if (farmerData?.user_id) {
-        const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(farmerData.user_id);
+        const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(
+          farmerData.user_id
+        );
         if (authError) throw authError;
       }
-  
+
       toast.success(`Deleted ${showDeleteDialog.name} and all associated data`);
       setShowDeleteDialog(null);
     } catch (err) {
-      toast.error((err as Error).message || 'Failed to delete farmer');
+      toast.error((err as Error).message || "Failed to delete farmer");
     } finally {
       setLoading(false);
     }

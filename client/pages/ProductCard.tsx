@@ -17,14 +17,16 @@ interface Product {
   location: string;
   created_at: string;
   featured: boolean;
+  priceDisplay?: string;
 }
 
 interface ProductCardProps {
-  product: Product;
-  onEdit: (product: Product) => void;
+  product: Product & { totalPrice: number };
+  onEdit: (product: Product & { totalPrice: number }) => void;
   onDelete: () => void;
   deleting: string | null;
   handleImageError: () => void;
+  priceDisplay: string;
   isAdmin?: boolean; // New prop to determine if it's admin view
 }
 

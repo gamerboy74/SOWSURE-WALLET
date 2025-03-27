@@ -1,4 +1,3 @@
-// useProductDetails.ts
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 
@@ -9,6 +8,7 @@ const TABLES = {
 } as const;
 
 interface ProductDetails {
+  buyer_id: any;
   id: string;
   type: "sell" | "buy";
   name: string;
@@ -20,6 +20,8 @@ interface ProductDetails {
   image_url: string | null;
   location: string;
   created_at: string;
+  contract_id?: string;
+  status: string;
   deadline?: string | null;
   moisture_content?: string | null;
   protein_level?: string | null;
@@ -94,6 +96,8 @@ export const useProductDetails = (productId: string) => {
       if (productRes.error) throw productRes.error;
       if (!productRes.data) throw new Error("Product not found");
 
+      console.log("Fetched product data:", productRes.data);
+
       // Set product data
       setProduct(productRes.data);
 
@@ -122,6 +126,6 @@ export const useProductDetails = (productId: string) => {
     isOwnListing,
     isFarmer,
     isBuyer,
-    refetch: fetchData, // Expose refetch function to manually trigger data fetch
+    refetch: fetchData,
   };
 };

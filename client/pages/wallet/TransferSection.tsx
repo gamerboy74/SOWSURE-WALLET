@@ -4,9 +4,10 @@ import { WalletService } from "../../services/wallet.service";
 import { ethers } from "ethers";
 import { toast } from "react-toastify";
 import type { Wallet } from "../../types/types";
+import { useNotification } from "../../../src/context/NotificationContext";
 
 interface TransferSectionProps {
-  wallet: Wallet & { ethBalance?: string; tokenBalance?: number } | null;
+  wallet: (Wallet & { ethBalance?: string; tokenBalance?: number }) | null;
   onTransferComplete: () => Promise<void>;
   setError: (error: string | null) => void;
 }
@@ -63,6 +64,7 @@ export const TransferSection = React.memo(
     const [showConfirm, setShowConfirm] = useState(false);
     const [transferType, setTransferType] = useState<boolean>(false);
     const [isFetchingBalance, setIsFetchingBalance] = useState(false);
+    const notification = useNotification();
 
     const validateTransfer = (isEth: boolean): boolean => {
       if (!wallet || !recipientAddress || !transferAmount) {
@@ -133,11 +135,19 @@ export const TransferSection = React.memo(
           { autoClose: 10000 }
         );
         await onTransferComplete();
+        notification.success("Transfer completed successfully");
       } catch (error) {
-        console.error(`${transferType ? "ETH" : "USDT"} transfer error:`, error);
-        const errorMessage = error instanceof Error ? error.message : `Failed to transfer ${transferType ? "ETH" : "USDT"}`;
+        console.error(
+          `${transferType ? "ETH" : "USDT"} transfer error:`,
+          error
+        );
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : `Failed to transfer ${transferType ? "ETH" : "USDT"}`;
         setError(errorMessage);
         toast.error(errorMessage);
+        notification.error(errorMessage);
       } finally {
         setIsTransferring(false);
       }
@@ -151,15 +161,26 @@ export const TransferSection = React.memo(
 
       try {
         if (isEth) {
-          const ethResult = await WalletService.getWalletBalance(wallet.wallet_address, "onchain");
+          const ethResult = await WalletService.getWalletBalance(
+            wallet.wallet_address,
+            "onchain"
+          );
           setTransferAmount(String(ethResult.balance));
         } else {
-          const usdtBalance = await WalletService.getUsdtBalance(wallet.wallet_address);
+          const usdtBalance = await WalletService.getUsdtBalance(
+            wallet.wallet_address
+          );
           setTransferAmount(usdtBalance);
         }
       } catch (error) {
-        console.error(`Error fetching ${isEth ? "ETH" : "USDT"} balance:`, error);
-        const errorMessage = error instanceof Error ? error.message : `Failed to fetch ${isEth ? "ETH" : "USDT"} balance`;
+        console.error(
+          `Error fetching ${isEth ? "ETH" : "USDT"} balance:`,
+          error
+        );
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : `Failed to fetch ${isEth ? "ETH" : "USDT"} balance`;
         setError(errorMessage);
         toast.error(errorMessage);
       } finally {
@@ -189,7 +210,8 @@ export const TransferSection = React.memo(
               value={transferAmount}
               onChange={(e) => {
                 const value = e.target.value;
-                if (value === "" || /^\d*\.?\d*$/.test(value)) setTransferAmount(value);
+                if (value === "" || /^\d*\.?\d*$/.test(value))
+                  setTransferAmount(value);
               }}
               placeholder="Amount"
               disabled={isTransferring || isFetchingBalance}
@@ -201,7 +223,9 @@ export const TransferSection = React.memo(
                 disabled={isTransferring || isFetchingBalance}
                 className="text-xs sm:text-sm text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors disabled:opacity-50"
               >
-                {isFetchingBalance && !transferType ? "Fetching..." : "Max USDT"}
+                {isFetchingBalance && !transferType
+                  ? "Fetching..."
+                  : "Max USDT"}
               </button>
               <button
                 onClick={() => setMaxAmount(true)}

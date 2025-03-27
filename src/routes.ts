@@ -57,6 +57,7 @@ export const sharedRoutes: Route[] = [
   { path: "/messages", element: lazy(() => import("../client/pages/shared/Messages")), key: "messages" },
   { path: "/notifications", element: lazy(() => import("../client/pages/shared/Notifications")), key: "notifications" },
   { path: "/transactions", element: lazy(() => import("../client/pages/shared/Transactions")), key: "transactions" },
+  { path: "/contracts", element: lazy(() => import("../client/pages/shared/Contracts")), key: "contracts" },
 ];
 
 // Admin Routes

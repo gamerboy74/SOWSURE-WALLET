@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Users, ShoppingBag, TrendingUp, Sprout } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
-import StatsCard from '../components/StatsCard';
-import DataTable from '../components/DataTable';
-import { toast, Toaster } from 'react-hot-toast';
+import React, { useEffect, useState, useCallback } from "react";
+import { Users, ShoppingBag, TrendingUp, Sprout } from "lucide-react";
+import { supabase } from "../../lib/supabase";
+import StatsCard from "../components/StatsCard";
+import DataTable from "../components/DataTable";
+import { toast, Toaster } from "react-hot-toast";
+import { useNotification } from "../../../src/context/NotificationContext";
 
 interface Farmer {
   name: string;
@@ -27,10 +28,11 @@ interface Stats {
 }
 
 const AdminDashboard: React.FC = () => {
+  const notification = useNotification();
   const [stats, setStats] = useState<Stats>({
     totalFarmers: 0,
     totalBuyers: 0,
-    totalRevenue: '₹0',
+    totalRevenue: "₹0",
     activeProducts: 0,
   });
   const [recentFarmers, setRecentFarmers] = useState<Farmer[]>([]);
@@ -52,21 +54,35 @@ const AdminDashboard: React.FC = () => {
         { data: farmersData },
         { data: buyersData },
       ] = await Promise.all([
-        supabase.from('farmers').select('*', { count: 'exact', head: true }),
-        supabase.from('buyers').select('*', { count: 'exact', head: true }),
-        supabase.from('products').select('price, quantity').eq('status', 'sold_out'),
-        supabase.from('products').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-        supabase.from('farmers').select('id, name, complete_address, created_at').order('created_at', { ascending: false }).limit(5),
-        supabase.from('buyers').select('id, company_name, business_address, created_at').order('created_at', { ascending: false }).limit(5),
+        supabase.from("farmers").select("*", { count: "exact", head: true }),
+        supabase.from("buyers").select("*", { count: "exact", head: true }),
+        supabase
+          .from("products")
+          .select("price, quantity")
+          .eq("status", "sold_out"),
+        supabase
+          .from("products")
+          .select("*", { count: "exact", head: true })
+          .eq("status", "active"),
+        supabase
+          .from("farmers")
+          .select("id, name, complete_address, created_at")
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabase
+          .from("buyers")
+          .select("id, company_name, business_address, created_at")
+          .order("created_at", { ascending: false })
+          .limit(5),
       ]);
 
       // Calculate farmer product counts
       const farmerProductCounts = await Promise.all(
         (farmersData || []).map(async (farmer: { id: string }) => {
           const { count } = await supabase
-            .from('products')
-            .select('*', { count: 'exact', head: true })
-            .eq('farmer_id', farmer.id);
+            .from("products")
+            .select("*", { count: "exact", head: true })
+            .eq("farmer_id", farmer.id);
           return count || 0;
         })
       );
@@ -75,50 +91,73 @@ const AdminDashboard: React.FC = () => {
       const buyerOrderCounts = await Promise.all(
         (buyersData || []).map(async (buyer: { id: string }) => {
           const { count } = await supabase
-            .from('products')
-            .select('*', { count: 'exact', head: true })
-            .eq('buyer_id', buyer.id)
-            .eq('type', 'buy');
+            .from("products")
+            .select("*", { count: "exact", head: true })
+            .eq("buyer_id", buyer.id)
+            .eq("type", "buy");
           return count || 0;
         })
       );
 
       // Calculate total revenue
       const totalRevenue = revenueData
-        ? revenueData.reduce((sum: number, product: { price: number; quantity: number }) => sum + product.price * product.quantity, 0)
+        ? revenueData.reduce(
+            (sum: number, product: { price: number; quantity: number }) =>
+              sum + product.price * product.quantity,
+            0
+          )
         : 0;
 
       setStats({
         totalFarmers: farmersCount || 0,
         totalBuyers: buyersCount || 0,
-        totalRevenue: totalRevenue > 0 ? `₹${(totalRevenue / 100000).toFixed(1)}L` : '₹0',
+        totalRevenue:
+          totalRevenue > 0 ? `₹${(totalRevenue / 100000).toFixed(1)}L` : "₹0",
         activeProducts: productsCount || 0,
       });
 
       setRecentFarmers(
-        (farmersData || []).map((farmer: { name: string; complete_address: string; created_at: string }, index: number) => ({
-          name: farmer.name,
-          location: farmer.complete_address || 'N/A',
-          products: farmerProductCounts[index],
-          joined: new Date(farmer.created_at).toISOString().split('T')[0],
-        }))
+        (farmersData || []).map(
+          (
+            farmer: {
+              name: string;
+              complete_address: string;
+              created_at: string;
+            },
+            index: number
+          ) => ({
+            name: farmer.name,
+            location: farmer.complete_address || "N/A",
+            products: farmerProductCounts[index],
+            joined: new Date(farmer.created_at).toISOString().split("T")[0],
+          })
+        )
       );
 
       setRecentBuyers(
-        (buyersData || []).map((buyer: { company_name: string; business_address: string; created_at: string }, index: number) => ({
-          name: buyer.company_name,
-          location: buyer.business_address || 'N/A',
-          orders: buyerOrderCounts[index],
-          joined: new Date(buyer.created_at).toISOString().split('T')[0],
-        }))
+        (buyersData || []).map(
+          (
+            buyer: {
+              company_name: string;
+              business_address: string;
+              created_at: string;
+            },
+            index: number
+          ) => ({
+            name: buyer.company_name,
+            location: buyer.business_address || "N/A",
+            orders: buyerOrderCounts[index],
+            joined: new Date(buyer.created_at).toISOString().split("T")[0],
+          })
+        )
       );
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-      setError('Failed to load dashboard data. Please try again.');
-      toast.error('Error loading dashboard data', {
-        position: 'top-right',
+      console.error("Error fetching dashboard data:", error);
+      setError("Failed to load dashboard data. Please try again.");
+      toast.error("Error loading dashboard data", {
+        position: "top-right",
         duration: 4000,
-        style: { background: '#EF4444', color: '#fff', borderRadius: '8px' },
+        style: { background: "#EF4444", color: "#fff", borderRadius: "8px" },
       });
     } finally {
       setLoading(false);
@@ -129,27 +168,27 @@ const AdminDashboard: React.FC = () => {
     fetchDashboardData();
 
     const farmerSubscription = supabase
-      .channel('farmers-channel')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'farmers' }, (payload) => {
-        toast.success(`New farmer: ${payload.new.name}`, {
-          position: 'top-right',
-          duration: 4000,
-          style: { background: '#10B981', color: '#fff', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' },
-        });
-        fetchDashboardData();
-      })
+      .channel("farmers-channel")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "farmers" },
+        (payload) => {
+          notification.info(`New farmer: ${payload.new.name}`);
+          fetchDashboardData();
+        }
+      )
       .subscribe();
 
     const buyerSubscription = supabase
-      .channel('buyers-channel')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'buyers' }, (payload) => {
-        toast.success(`New buyer: ${payload.new.company_name}`, {
-          position: 'top-right',
-          duration: 4000,
-          style: { background: '#3B82F6', color: '#fff', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' },
-        });
-        fetchDashboardData();
-      })
+      .channel("buyers-channel")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "buyers" },
+        (payload) => {
+          notification.info(`New buyer: ${payload.new.company_name}`);
+          fetchDashboardData();
+        }
+      )
       .subscribe();
 
     return () => {
@@ -163,7 +202,9 @@ const AdminDashboard: React.FC = () => {
       <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100 flex items-center justify-center">
         <div className="flex flex-col items-center space-y-4">
           <div className="w-16 h-16 border-4 border-t-indigo-500 border-gray-200 rounded-full animate-spin"></div>
-          <p className="text-lg font-semibold text-gray-700 animate-pulse">Loading Dashboard...</p>
+          <p className="text-lg font-semibold text-gray-700 animate-pulse">
+            Loading Dashboard...
+          </p>
         </div>
       </div>
     );
@@ -234,10 +275,10 @@ const AdminDashboard: React.FC = () => {
           </h2>
           <DataTable
             columns={[
-              { key: 'name', label: 'Name' },
-              { key: 'location', label: 'Location' },
-              { key: 'products', label: 'Products' },
-              { key: 'joined', label: 'Joined' },
+              { key: "name", label: "Name" },
+              { key: "location", label: "Location" },
+              { key: "products", label: "Products" },
+              { key: "joined", label: "Joined" },
             ]}
             data={recentFarmers}
             className="text-gray-700"
@@ -250,10 +291,10 @@ const AdminDashboard: React.FC = () => {
           </h2>
           <DataTable
             columns={[
-              { key: 'name', label: 'Name' },
-              { key: 'location', label: 'Location' },
-              { key: 'orders', label: 'Orders' },
-              { key: 'joined', label: 'Joined' },
+              { key: "name", label: "Name" },
+              { key: "location", label: "Location" },
+              { key: "orders", label: "Orders" },
+              { key: "joined", label: "Joined" },
             ]}
             data={recentBuyers}
             className="text-gray-700"
@@ -261,7 +302,7 @@ const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      <style >{`
+      <style>{`
         @keyframes bounceIn {
           0% { transform: scale(0.9); opacity: 0; }
           60% { transform: scale(1.05); opacity: 1; }

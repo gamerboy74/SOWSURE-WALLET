@@ -12,9 +12,11 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
     "@tanstack/react-query": "^5.69.0",
+    "crypto-js": "^4.2.0",
     "date-fns": "^3.3.1",
     "debounce": "^2.2.0",
-    "ethers": "^6.11.1",
+    "ethers": "^6.13.5",
+    "eventemitter3": "^5.0.1",
     "framer-motion": "^12.5.0",
     "lodash": "^4.17.21",
     "lucide-react": "^0.344.0",

@@ -8,6 +8,7 @@ interface DialogBoxProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   loading?: boolean;
+  contentClassName:string;
 }
 
 const DialogBox: React.FC<DialogBoxProps> = ({
@@ -17,6 +18,7 @@ const DialogBox: React.FC<DialogBoxProps> = ({
   children,
   footer,
   loading = false,
+  contentClassName,
 }) => {
   if (!isOpen) return null;
 

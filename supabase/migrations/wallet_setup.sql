@@ -705,3 +705,1070 @@ CREATE INDEX IF NOT EXISTS idx_contract_events_contract_id ON contract_events(co
 CREATE INDEX IF NOT EXISTS idx_wallet_transactions_contract_id ON wallet_transactions(contract_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_contract_id ON notifications(contract_id);
 CREATE INDEX IF NOT EXISTS idx_products_contract_id ON products(contract_id);
+
+
+-- Add missing field to smart_contracts
+ALTER TABLE smart_contracts
+ADD COLUMN IF NOT EXISTS confirmation_deadline TIMESTAMPTZ;
+
+-- Fix status CHECK constraint in smart_contracts
+ALTER TABLE smart_contracts
+ALTER COLUMN status
+DROP CHECK,
+ADD CONSTRAINT status_check CHECK (status IN ('PENDING', 'FUNDED', 'IN_PROGRESS', 'DELIVERED', 'COMPLETED', 'CANCELLED', 'DISPUTED', 'RESOLVED'));
+
+-- Fix event_name CHECK constraint in contract_events
+ALTER TABLE contract_events
+ALTER COLUMN event_name
+DROP CHECK,
+ADD CONSTRAINT event_name_check CHECK (event_name IN ('ContractCreated', 'ContractStatusUpdated', 'FundsDeposited', 'FundsReleased', 'DisputeRaised', 'DisputeResolved', 'PlatformFeesWithdrawn'));
+
+-- Ensure foreign keys in products, wallet_transactions, notifications
+ALTER TABLE products
+DROP COLUMN IF EXISTS contract_id,
+ADD COLUMN contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE SET NULL;
+
+ALTER TABLE wallet_transactions
+DROP COLUMN IF EXISTS contract_id,
+ADD COLUMN contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE SET NULL;
+
+ALTER TABLE notifications
+DROP COLUMN IF EXISTS contract_id,
+ADD COLUMN contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE SET NULL;
+
+-- Create new sync functions (as shown above)
+
+
+-- ... (paste the sync functions here)
+
+
+
+-- Sync Confirm Delivery
+CREATE OR REPLACE FUNCTION sync_confirm_delivery(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  UPDATE smart_contracts
+  SET status = 'IN_PROGRESS',
+      farmer_confirmed_delivery = TRUE,
+      confirmation_deadline = NOW() + INTERVAL '7 days', -- Matches contract's confirmationPeriod
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Delivery Confirmed',
+    'Farmer confirmed delivery for contract #' || p_contract_id || '. Please confirm receipt within 7 days.',
+    'order', jsonb_build_object('contract_id', p_contract_id), NOW()
+  FROM buyers b
+  JOIN smart_contracts sc ON sc.buyer_id = b.id
+  WHERE sc.contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Sync Confirm Receipt
+CREATE OR REPLACE FUNCTION sync_confirm_receipt(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_amount_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT amount_eth INTO v_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  v_fee_eth := v_amount_eth * 0.05; -- 5% platform fee
+
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      buyer_confirmed_receipt = TRUE,
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_amount_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Final payment for contract', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    f.user_id, p_contract_id, 'Payment Released',
+    'Payment for contract #' || p_contract_id || ' has been released minus platform fee.',
+    'payment', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', (v_amount_eth - v_fee_eth)), NOW()
+  FROM farmers f
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Receipt Confirmed',
+    'You confirmed receipt for contract #' || p_contract_id || '. Transaction completed.',
+    'order', jsonb_build_object('contract_id', p_contract_id), NOW()
+  FROM buyers b
+  JOIN smart_contracts sc ON sc.buyer_id = b.id
+  WHERE sc.contract_id = p_contract_id;
+
+  UPDATE products
+  SET status = CASE 
+    WHEN type = 'sell' THEN 'sold_out'
+    WHEN type = 'buy' THEN 'fulfilled'
+    END
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Sync Pay Remaining Sell Contract
+CREATE OR REPLACE FUNCTION sync_pay_remaining_sell_contract(
+  p_contract_id BIGINT,
+  p_amount_eth DECIMAL,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  UPDATE smart_contracts
+  SET escrow_balance_eth = escrow_balance_eth + p_amount_eth,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Remaining payment for sell contract', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.buyer_id = b.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Remaining Payment Sent',
+    'Remaining payment for contract #' || p_contract_id || ' has been sent.',
+    'payment', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', p_amount_eth), NOW()
+  FROM buyers b
+  JOIN smart_contracts sc ON sc.buyer_id = b.id
+  WHERE sc.contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Sync Claim Remaining After Timeout
+CREATE OR REPLACE FUNCTION sync_claim_remaining_after_timeout(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_escrow_balance_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT escrow_balance_eth, (amount_eth * 0.05) INTO v_escrow_balance_eth, v_fee_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_escrow_balance_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Claimed remaining after timeout', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    f.user_id, p_contract_id, 'Funds Claimed',
+    'Remaining funds for contract #' || p_contract_id || ' claimed after timeout.',
+    'payment', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', (v_escrow_balance_eth - v_fee_eth)), NOW()
+  FROM farmers f
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Sync Raise Dispute
+CREATE OR REPLACE FUNCTION sync_raise_dispute(
+  p_contract_id BIGINT,
+  p_raised_by UUID,
+  p_reason TEXT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  INSERT INTO disputes (
+    contract_id, raised_by, reason, status, created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_raised_by, p_reason, 'PENDING', NOW(), NOW()
+  );
+
+  UPDATE smart_contracts
+  SET status = 'DISPUTED',
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  ) VALUES (
+    p_raised_by, p_contract_id, 'Dispute Raised',
+    'You raised a dispute for contract #' || p_contract_id || '.',
+    'dispute', jsonb_build_object('contract_id', p_contract_id, 'reason', p_reason), NOW()
+  );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Sync Resolve Dispute
+CREATE OR REPLACE FUNCTION sync_resolve_dispute(
+  p_contract_id BIGINT,
+  p_resolved_by UUID,
+  p_pay_farmer BOOLEAN,
+  p_resolution TEXT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_escrow_balance_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT escrow_balance_eth, (amount_eth * 0.05) INTO v_escrow_balance_eth, v_fee_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE disputes
+  SET status = 'RESOLVED',
+      resolution = p_resolution,
+      resolved_by = p_resolved_by,
+      resolved_at = NOW(),
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET status = 'RESOLVED',
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  IF p_pay_farmer THEN
+    INSERT INTO wallet_transactions (
+      wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+    )
+    SELECT 
+      w.id, p_contract_id, (v_escrow_balance_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+      jsonb_build_object('note', 'Dispute resolved - paid to farmer', 'tx_hash', p_tx_hash), NOW()
+    FROM wallets w
+    JOIN farmers f ON f.user_id = w.user_id
+    JOIN smart_contracts sc ON sc.farmer_id = f.id
+    WHERE sc.contract_id = p_contract_id;
+
+    INSERT INTO platform_fees (
+      contract_id, amount_eth, collected_at, tx_hash
+    ) VALUES (
+      p_contract_id, v_fee_eth, NOW(), p_tx_hash
+    );
+  ELSE
+    INSERT INTO wallet_transactions (
+      wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+    )
+    SELECT 
+      w.id, p_contract_id, v_escrow_balance_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+      jsonb_build_object('note', 'Dispute resolved - refunded to buyer', 'tx_hash', p_tx_hash), NOW()
+    FROM wallets w
+    JOIN buyers b ON b.user_id = w.user_id
+    JOIN smart_contracts sc ON sc.buyer_id = b.id
+    WHERE sc.contract_id = p_contract_id;
+  END IF;
+
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    user_id, p_contract_id, 'Dispute Resolved',
+    'Dispute for contract #' || p_contract_id || ' has been resolved: ' || p_resolution,
+    'dispute', jsonb_build_object('contract_id', p_contract_id, 'resolution', p_resolution), NOW()
+  FROM (
+    SELECT f.user_id FROM farmers f JOIN smart_contracts sc ON sc.farmer_id = f.id WHERE sc.contract_id = p_contract_id
+    UNION
+    SELECT b.user_id FROM buyers b JOIN smart_contracts sc ON sc.buyer_id = b.id WHERE sc.contract_id = p_contract_id
+  ) AS users;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE POLICY "Allow authenticated users to read smart_contracts" ON smart_contracts
+FOR SELECT TO authenticated
+USING (true);
+
+
+-- Drop existing policies to avoid conflicts
+DROP POLICY IF EXISTS "Users can view own notifications" ON notifications;
+DROP POLICY IF EXISTS "Users can update own notifications" ON notifications;
+
+-- Recreate policies with admin access
+CREATE POLICY "Users can view own notifications" ON notifications
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own notifications" ON notifications
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- Allow admins to insert notifications for any user
+CREATE POLICY "Admins can insert notifications" ON notifications
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+-- Allow admins to view all notifications
+CREATE POLICY "Admins can view all notifications" ON notifications
+  FOR SELECT
+  TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+  -- Drop the existing function
+DROP FUNCTION IF EXISTS sync_buyer_contract_creation;
+
+-- Recreate the function with SECURITY DEFINER and logging
+CREATE OR REPLACE FUNCTION sync_buyer_contract_creation(
+  p_contract_id BIGINT,
+  p_buyer_id UUID,
+  p_crop_name TEXT,
+  p_quantity NUMERIC,
+  p_amount_eth DECIMAL, -- ETH stored in backend
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ,
+  p_delivery_method TEXT,
+  p_delivery_location TEXT,
+  p_additional_notes TEXT,
+  p_tx_hash TEXT,
+  p_contract_address TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_advance_amount_eth DECIMAL(20,8) := (p_amount_eth * 0.20); -- 20% advance in ETH
+  v_buyer_user_id UUID;
+BEGIN
+  -- Debug: Log the authenticated user and buyer user_id
+  SELECT user_id INTO v_buyer_user_id
+  FROM buyers
+  WHERE id = p_buyer_id;
+
+  RAISE NOTICE 'Authenticated user (auth.uid()): %, Buyer user_id: %', auth.uid(), v_buyer_user_id;
+
+  -- Insert into smart_contracts
+  INSERT INTO smart_contracts (
+    contract_id, buyer_id, crop_name, quantity, amount_eth, advance_amount_eth,
+    start_date, end_date, delivery_method, delivery_location, additional_notes,
+    status, escrow_balance_eth, is_buyer_initiated, blockchain_tx_hash, contract_address,
+    created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_buyer_id, p_crop_name, p_quantity, p_amount_eth, v_advance_amount_eth,
+    p_start_date, p_end_date, p_delivery_method, p_delivery_location, p_additional_notes,
+    'PENDING', p_amount_eth, true, p_tx_hash, p_contract_address, NOW(), NOW()
+  );
+
+  -- Insert into wallet_transactions
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH', -- ETH
+    jsonb_build_object('note', 'Buyer contract funding', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  WHERE b.id = p_buyer_id;
+
+  -- Temporarily bypass RLS for notifications insert
+  SET LOCAL row_security TO 'off';
+
+  -- Insert into notifications
+  INSERT INTO notifications (
+    user_id, contract_id, title, message, type, data, created_at
+  )
+  SELECT 
+    b.user_id, p_contract_id, 'Buy Contract Created',
+    'Your contract #' || p_contract_id || ' for ' || p_crop_name || ' has been created and funded.',
+    'order', jsonb_build_object('contract_id', p_contract_id, 'amount_eth', p_amount_eth), NOW()
+  FROM buyers b
+  WHERE b.id = p_buyer_id;
+
+  -- Re-enable RLS
+  SET LOCAL row_security TO 'on';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_buyer_contract_creation TO authenticated;
+
+DROP POLICY IF EXISTS "Users can update own contracts" ON smart_contracts;
+
+CREATE POLICY "Users can update own contracts" ON smart_contracts
+FOR UPDATE
+TO authenticated
+USING (
+  -- Allow updates if the user is the farmer and farmer_id is already set
+  (farmer_id IS NOT NULL AND farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid()))
+  OR
+  -- Allow updates if the user is the buyer and buyer_id is already set
+  (buyer_id IS NOT NULL AND buyer_id = (SELECT id FROM buyers WHERE user_id = auth.uid()))
+  OR
+  -- Allow a farmer to accept a buy contract (farmer_id is NULL, status is PENDING, is_buyer_initiated is true)
+  (
+    farmer_id IS NULL
+    AND status = 'PENDING'
+    AND is_buyer_initiated = true
+    AND EXISTS (SELECT 1 FROM farmers WHERE user_id = auth.uid())
+  )
+);
+
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_buyer_contract_creation;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_buyer_contract_creation(
+  p_contract_id BIGINT,
+  p_buyer_id UUID,
+  p_crop_name TEXT,
+  p_quantity NUMERIC,
+  p_amount_eth DECIMAL,
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ,
+  p_delivery_method TEXT,
+  p_delivery_location TEXT,
+  p_additional_notes TEXT,
+  p_tx_hash TEXT,
+  p_contract_address TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_advance_amount_eth DECIMAL(20,8) := (p_amount_eth * 0.20); -- 20% advance in ETH
+  v_buyer_user_id UUID;
+BEGIN
+  -- Debug: Log the authenticated user and buyer user_id
+  SELECT user_id INTO v_buyer_user_id
+  FROM buyers
+  WHERE id = p_buyer_id;
+
+  RAISE NOTICE 'Authenticated user (auth.uid()): %, Buyer user_id: %', auth.uid(), v_buyer_user_id;
+
+  -- Insert into smart_contracts
+  INSERT INTO smart_contracts (
+    contract_id, buyer_id, crop_name, quantity, amount_eth, advance_amount_eth,
+    start_date, end_date, delivery_method, delivery_location, additional_notes,
+    status, escrow_balance_eth, is_buyer_initiated, blockchain_tx_hash, contract_address,
+    created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_buyer_id, p_crop_name, p_quantity, p_amount_eth, v_advance_amount_eth,
+    p_start_date, p_end_date, p_delivery_method, p_delivery_location, p_additional_notes,
+    'PENDING', p_amount_eth, true, p_tx_hash, p_contract_address, NOW(), NOW()
+  );
+
+  -- Insert into wallet_transactions
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Buyer contract funding', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  WHERE b.id = p_buyer_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_buyer_contract_creation TO authenticated;
+
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_farmer_acceptance;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_farmer_acceptance(
+  p_contract_id BIGINT,
+  p_farmer_id UUID,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_advance_amount_eth DECIMAL(20,8);
+BEGIN
+  SELECT advance_amount_eth INTO v_advance_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET farmer_id = p_farmer_id,
+      status = 'FUNDED',
+      escrow_balance_eth = escrow_balance_eth - v_advance_amount_eth,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, v_advance_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Advance payment for contract acceptance', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  WHERE f.id = p_farmer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_farmer_acceptance TO authenticated;
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_sell_contract_creation;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_sell_contract_creation(
+  p_contract_id BIGINT,
+  p_farmer_id UUID,
+  p_crop_name TEXT,
+  p_quantity NUMERIC,
+  p_amount_eth DECIMAL,
+  p_start_date TIMESTAMPTZ,
+  p_end_date TIMESTAMPTZ,
+  p_delivery_method TEXT,
+  p_delivery_location TEXT,
+  p_additional_notes TEXT,
+  p_tx_hash TEXT,
+  p_contract_address TEXT
+) RETURNS VOID AS $$
+BEGIN
+  INSERT INTO smart_contracts (
+    contract_id, farmer_id, crop_name, quantity, amount_eth, start_date, end_date,
+    delivery_method, delivery_location, additional_notes, status, escrow_balance_eth,
+    is_buyer_initiated, blockchain_tx_hash, contract_address, created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_farmer_id, p_crop_name, p_quantity, p_amount_eth, p_start_date, p_end_date,
+    p_delivery_method, p_delivery_location, p_additional_notes, 'PENDING', 0,
+    false, p_tx_hash, p_contract_address, NOW(), NOW()
+  );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_sell_contract_creation TO authenticated;
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_sell_contract_acceptance;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_sell_contract_acceptance(
+  p_contract_id BIGINT,
+  p_buyer_id UUID,
+  p_amount_eth DECIMAL,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  UPDATE smart_contracts
+  SET buyer_id = p_buyer_id,
+      status = 'FUNDED',
+      escrow_balance_eth = p_amount_eth,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Sell contract funding on acceptance', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  WHERE b.id = p_buyer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_sell_contract_acceptance TO authenticated;
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_confirm_delivery;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_confirm_delivery(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  UPDATE smart_contracts
+  SET status = 'IN_PROGRESS',
+      farmer_confirmed_delivery = TRUE,
+      confirmation_deadline = NOW() + INTERVAL '7 days',
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_confirm_delivery TO authenticated;
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_confirm_receipt;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_confirm_receipt(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_amount_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT amount_eth INTO v_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  v_fee_eth := v_amount_eth * 0.05; -- 5% platform fee
+
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      buyer_confirmed_receipt = TRUE,
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_amount_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Final payment for contract', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+
+  UPDATE products
+  SET status = CASE 
+    WHEN type = 'sell' THEN 'sold_out'
+    WHEN type = 'buy' THEN 'fulfilled'
+    END
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_confirm_receipt TO authenticated;
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_pay_remaining_sell_contract;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_pay_remaining_sell_contract(
+  p_contract_id BIGINT,
+  p_amount_eth DECIMAL,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  UPDATE smart_contracts
+  SET escrow_balance_eth = escrow_balance_eth + p_amount_eth,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, p_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Remaining payment for sell contract', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN buyers b ON b.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.buyer_id = b.id
+  WHERE sc.contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_pay_remaining_sell_contract TO authenticated;
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_claim_remaining_after_timeout;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_claim_remaining_after_timeout(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_escrow_balance_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT escrow_balance_eth, (amount_eth * 0.05) INTO v_escrow_balance_eth, v_fee_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_escrow_balance_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Claimed remaining after timeout', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_claim_remaining_after_timeout TO authenticated;
+
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_raise_dispute;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_raise_dispute(
+  p_contract_id BIGINT,
+  p_raised_by UUID,
+  p_reason TEXT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+BEGIN
+  INSERT INTO disputes (
+    contract_id, raised_by, reason, status, created_at, updated_at
+  ) VALUES (
+    p_contract_id, p_raised_by, p_reason, 'PENDING', NOW(), NOW()
+  );
+
+  UPDATE smart_contracts
+  SET status = 'DISPUTED',
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_raise_dispute TO authenticated;
+
+
+-- Drop the existing function
+DROP FUNCTION IF EXISTS sync_resolve_dispute;
+
+-- Recreate the function without notification logic
+CREATE OR REPLACE FUNCTION sync_resolve_dispute(
+  p_contract_id BIGINT,
+  p_resolved_by UUID,
+  p_pay_farmer BOOLEAN,
+  p_resolution TEXT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_escrow_balance_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT escrow_balance_eth, (amount_eth * 0.05) INTO v_escrow_balance_eth, v_fee_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE disputes
+  SET status = 'RESOLVED',
+      resolution = p_resolution,
+      resolved_by = p_resolved_by,
+      resolved_at = NOW(),
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET status = 'RESOLVED',
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  IF p_pay_farmer THEN
+    INSERT INTO wallet_transactions (
+      wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+    )
+    SELECT 
+      w.id, p_contract_id, (v_escrow_balance_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+      jsonb_build_object('note', 'Dispute resolved - paid to farmer', 'tx_hash', p_tx_hash), NOW()
+    FROM wallets w
+    JOIN farmers f ON f.user_id = w.user_id
+    JOIN smart_contracts sc ON sc.farmer_id = f.id
+    WHERE sc.contract_id = p_contract_id;
+
+    INSERT INTO platform_fees (
+      contract_id, amount_eth, collected_at, tx_hash
+    ) VALUES (
+      p_contract_id, v_fee_eth, NOW(), p_tx_hash
+    );
+  ELSE
+    INSERT INTO wallet_transactions (
+      wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+    )
+    SELECT 
+      w.id, p_contract_id, v_escrow_balance_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+      jsonb_build_object('note', 'Dispute resolved - refunded to buyer', 'tx_hash', p_tx_hash), NOW()
+    FROM wallets w
+    JOIN buyers b ON b.user_id = w.user_id
+    JOIN smart_contracts sc ON sc.buyer_id = b.id
+    WHERE sc.contract_id = p_contract_id;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_resolve_dispute TO authenticated;
+
+
+ALTER TABLE products
+DROP CONSTRAINT valid_status;
+
+DROP FUNCTION IF EXISTS sync_confirm_receipt;
+
+CREATE OR REPLACE FUNCTION sync_confirm_receipt(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_amount_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  -- Fetch the contract amount
+  SELECT amount_eth INTO v_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  -- Calculate the platform fee (5%)
+  v_fee_eth := v_amount_eth * 0.05;
+
+  -- Update the smart_contracts table
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      buyer_confirmed_receipt = TRUE,
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  -- Insert into wallet_transactions (payment to farmer)
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_amount_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Final payment for contract', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  -- Insert into platform_fees
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+
+  -- Update the products table (use 'completed' instead of 'sold_out' or 'fulfilled')
+  UPDATE products
+  SET status = 'completed'
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant execution permission
+GRANT EXECUTE ON FUNCTION sync_confirm_receipt TO authenticated;
+
+
+DROP FUNCTION IF EXISTS sync_claim_remaining_after_timeout;
+
+CREATE OR REPLACE FUNCTION sync_claim_remaining_after_timeout(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_escrow_balance_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  SELECT escrow_balance_eth, (amount_eth * 0.05) INTO v_escrow_balance_eth, v_fee_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_escrow_balance_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Claimed remaining after timeout', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+
+  -- Update the products table (use 'completed' instead of 'sold_out' or 'fulfilled')
+  UPDATE products
+  SET status = 'completed'
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+GRANT EXECUTE ON FUNCTION sync_claim_remaining_after_timeout TO authenticated;
+
+CREATE OR REPLACE FUNCTION sync_confirm_receipt(
+  p_contract_id BIGINT,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_amount_eth DECIMAL(20,8);
+  v_fee_eth DECIMAL(20,8);
+BEGIN
+  -- Fetch the contract amount
+  SELECT amount_eth INTO v_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  -- Calculate the platform fee (5%)
+  v_fee_eth := v_amount_eth * 0.05;
+
+  -- Validate that v_fee_eth is greater than 0
+  IF v_fee_eth <= 0 THEN
+    RAISE EXCEPTION 'Platform fee must be greater than 0 for contract_id %, amount_eth: %, calculated fee: %', 
+      p_contract_id, v_amount_eth, v_fee_eth;
+  END IF;
+
+  -- Update the smart_contracts table
+  UPDATE smart_contracts
+  SET status = 'COMPLETED',
+      buyer_confirmed_receipt = TRUE,
+      escrow_balance_eth = 0,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id;
+
+  -- Insert into wallet_transactions (payment to farmer)
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, (v_amount_eth - v_fee_eth), 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Final payment for contract', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  JOIN smart_contracts sc ON sc.farmer_id = f.id
+  WHERE sc.contract_id = p_contract_id;
+
+  -- Insert into platform_fees only if fee is valid
+  INSERT INTO platform_fees (
+    contract_id, amount_eth, collected_at, tx_hash
+  ) VALUES (
+    p_contract_id, v_fee_eth, NOW(), p_tx_hash
+  );
+
+  -- Update the products table
+  UPDATE products
+  SET status = 'completed'
+  WHERE contract_id = p_contract_id;
+END;
+$$ LANGUAGE plpgsql;
+
+
+DROP POLICY IF EXISTS "Users can update own contracts" ON smart_contracts;
+
+CREATE POLICY "Users can update own contracts" ON smart_contracts
+FOR UPDATE
+TO authenticated
+USING (
+  -- Allow updates if the user is the farmer and farmer_id is set
+  (farmer_id IS NOT NULL AND farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid()))
+  OR
+  -- Allow updates if the user is the buyer and buyer_id is set
+  (buyer_id IS NOT NULL AND buyer_id = (SELECT id FROM buyers WHERE user_id = auth.uid()))
+  OR
+  -- Allow a buyer to accept a sell contract (buyer_id is NULL, status is PENDING, is_buyer_initiated is false)
+  (
+    buyer_id IS NULL
+    AND status = 'PENDING'
+    AND is_buyer_initiated = false
+    AND EXISTS (SELECT 1 FROM buyers WHERE user_id = auth.uid())
+  )
+);

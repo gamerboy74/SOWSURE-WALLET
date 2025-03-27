@@ -1,7 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { LuSprout, LuFacebook, LuTwitter, LuInstagram, LuLinkedin, LuLoader } from 'react-icons/lu';
-import { supabase } from '../lib/supabase';
+import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import {
+  LuSprout,
+  LuFacebook,
+  LuTwitter,
+  LuInstagram,
+  LuLinkedin,
+  LuLoader,
+} from "react-icons/lu";
+import { supabase } from "../lib/supabase";
+import { useNotification } from "../../src/context/NotificationContext";
 
 interface SiteSettings {
   site_name: string;
@@ -17,6 +25,7 @@ interface SiteSettings {
 }
 
 function Footer() {
+  const notification = useNotification();
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,35 +36,49 @@ function Footer() {
     const fetchSettings = async () => {
       try {
         const { data, error } = await supabase
-          .from('site_settings')
-          .select('site_name, support_email, contact_phone, contact_address, social_links')
+          .from("site_settings")
+          .select(
+            "site_name, support_email, contact_phone, contact_address, social_links"
+          )
           .single();
 
         if (!isMounted) return;
 
-        if (error && error.code !== 'PGRST116') {
-          throw new Error('Failed to fetch site settings');
+        if (error && error.code !== "PGRST116") {
+          throw new Error("Failed to fetch site settings");
         }
 
         setSettings(
           data || {
-            site_name: 'FarmConnect',
-            support_email: 'info@farmconnect.com',
-            contact_phone: '+91 123 456 7890',
-            contact_address: '123 Agriculture Road, Farming District, New Delhi, 110001',
-            social_links: { facebook: '', twitter: '', instagram: '', linkedin: '' }
+            site_name: "FarmConnect",
+            support_email: "info@farmconnect.com",
+            contact_phone: "+91 123 456 7890",
+            contact_address:
+              "123 Agriculture Road, Farming District, New Delhi, 110001",
+            social_links: {
+              facebook: "",
+              twitter: "",
+              instagram: "",
+              linkedin: "",
+            },
           }
         );
       } catch (err) {
         if (!isMounted) return;
-
-        setError('Unable to load footer information');
+        notification.error("Failed to load footer information");
+        setError("Unable to load footer information");
         setSettings({
-          site_name: 'FarmConnect',
-          support_email: 'info@farmconnect.com',
-          contact_phone: '+91 123 456 7890',
-          contact_address: '123 Agriculture Road, Farming District, New Delhi, 110001',
-          social_links: { facebook: '', twitter: '', instagram: '', linkedin: '' }
+          site_name: "FarmConnect",
+          support_email: "info@farmconnect.com",
+          contact_phone: "+91 123 456 7890",
+          contact_address:
+            "123 Agriculture Road, Farming District, New Delhi, 110001",
+          social_links: {
+            facebook: "",
+            twitter: "",
+            instagram: "",
+            linkedin: "",
+          },
         });
       } finally {
         if (isMounted) setIsLoading(false);
@@ -93,10 +116,13 @@ function Footer() {
           <div className="col-span-1">
             <Link to="/" className="flex items-center">
               <LuSprout className="h-7 w-7 text-emerald-600" />
-              <span className="ml-2 text-lg sm:text-xl font-bold text-gray-900">{settings!.site_name}</span>
+              <span className="ml-2 text-lg sm:text-xl font-bold text-gray-900">
+                {settings!.site_name}
+              </span>
             </Link>
             <p className="mt-3 text-sm sm:text-base text-gray-600 leading-relaxed">
-              Empowering farmers and buyers with digital tools to connect, trade, and grow together.
+              Empowering farmers and buyers with digital tools to connect,
+              trade, and grow together.
             </p>
             <div className="mt-4 flex space-x-3">
               {settings!.social_links.facebook && (
@@ -148,7 +174,9 @@ function Footer() {
 
           {/* Quick Links */}
           <div>
-            <h3 className="text-xs sm:text-sm font-semibold text-gray-400 uppercase tracking-wider">Quick Links</h3>
+            <h3 className="text-xs sm:text-sm font-semibold text-gray-400 uppercase tracking-wider">
+              Quick Links
+            </h3>
             <ul className="mt-3 space-y-2 sm:space-y-3">
               <li>
                 <Link
@@ -187,25 +215,39 @@ function Footer() {
 
           {/* Support */}
           <div>
-            <h3 className="text-xs sm:text-sm font-semibold text-gray-400 uppercase tracking-wider">Support</h3>
+            <h3 className="text-xs sm:text-sm font-semibold text-gray-400 uppercase tracking-wider">
+              Support
+            </h3>
             <ul className="mt-3 space-y-2 sm:space-y-3">
               <li>
-                <a href="#" className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200">
+                <a
+                  href="#"
+                  className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200"
+                >
                   Help Center
                 </a>
               </li>
               <li>
-                <a href="#" className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200">
+                <a
+                  href="#"
+                  className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200"
+                >
                   Terms of Service
                 </a>
               </li>
               <li>
-                <a href="#" className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200">
+                <a
+                  href="#"
+                  className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200"
+                >
                   Privacy Policy
                 </a>
               </li>
               <li>
-                <a href="#" className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200">
+                <a
+                  href="#"
+                  className="text-sm sm:text-base text-gray-600 hover:text-emerald-600 transition-colors duration-200"
+                >
                   Contact Us
                 </a>
               </li>
@@ -214,7 +256,9 @@ function Footer() {
 
           {/* Contact */}
           <div>
-            <h3 className="text-xs sm:text-sm font-semibold text-gray-400 uppercase tracking-wider">Contact</h3>
+            <h3 className="text-xs sm:text-sm font-semibold text-gray-400 uppercase tracking-wider">
+              Contact
+            </h3>
             <ul className="mt-3 space-y-2 sm:space-y-3">
               <li className="text-sm sm:text-base text-gray-600 leading-relaxed whitespace-pre-line">
                 {settings!.contact_address}
@@ -241,7 +285,8 @@ function Footer() {
 
         <div className="mt-8 border-t border-gray-200 pt-6">
           <p className="text-center text-xs sm:text-sm text-gray-400">
-            © {new Date().getFullYear()} {settings!.site_name}. All rights reserved.
+            © {new Date().getFullYear()} {settings!.site_name}. All rights
+            reserved.
           </p>
         </div>
       </div>

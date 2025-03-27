@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import LoadingSpinner from "../../src/components/shared/LoadingSpinner";
+import { useNotification } from "../../src/context/NotificationContext";
 
 interface DashboardStats {
   totalListings?: number;
@@ -46,6 +47,7 @@ const StatCard: React.FC<{
 
 function FarmerDashboard() {
   const navigate = useNavigate();
+  const notification = useNotification();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<ExtendedFarmer | null>(null);
@@ -54,8 +56,12 @@ function FarmerDashboard() {
   useEffect(() => {
     async function loadProfileAndStats() {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError) throw new Error(`Authentication failed: ${authError.message}`);
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+        if (authError)
+          throw new Error(`Authentication failed: ${authError.message}`);
         if (!user) {
           navigate("/");
           return;
@@ -67,7 +73,8 @@ function FarmerDashboard() {
           .eq("user_id", user.id)
           .maybeSingle();
 
-        if (farmerError) throw new Error(`Farmer query failed: ${farmerError.message}`);
+        if (farmerError)
+          throw new Error(`Farmer query failed: ${farmerError.message}`);
         if (!farmerData) throw new Error("Profile not found");
 
         const { data: walletData, error: walletError } = await supabase
@@ -76,27 +83,36 @@ function FarmerDashboard() {
           .eq("user_id", user.id)
           .maybeSingle();
 
-        if (walletError) throw new Error(`Wallet query failed: ${walletError.message}`);
+        if (walletError)
+          throw new Error(`Wallet query failed: ${walletError.message}`);
 
         setProfile({
           ...farmerData,
           wallet_address: walletData?.wallet_address || null,
         });
 
-        const { count: totalListings, error: totalListingsError } = await supabase
-          .from("products")
-          .select("*", { count: "exact", head: true })
-          .eq("farmer_id", farmerData.id);
+        const { count: totalListings, error: totalListingsError } =
+          await supabase
+            .from("products")
+            .select("*", { count: "exact", head: true })
+            .eq("farmer_id", farmerData.id);
 
-        if (totalListingsError) throw new Error(`Failed to fetch total listings: ${totalListingsError.message}`);
+        if (totalListingsError)
+          throw new Error(
+            `Failed to fetch total listings: ${totalListingsError.message}`
+          );
 
-        const { count: activeListings, error: activeListingsError } = await supabase
-          .from("products")
-          .select("*", { count: "exact", head: true })
-          .eq("farmer_id", farmerData.id)
-          .eq("status", "active");
+        const { count: activeListings, error: activeListingsError } =
+          await supabase
+            .from("products")
+            .select("*", { count: "exact", head: true })
+            .eq("farmer_id", farmerData.id)
+            .eq("status", "active");
 
-        if (activeListingsError) throw new Error(`Failed to fetch active listings: ${activeListingsError.message}`);
+        if (activeListingsError)
+          throw new Error(
+            `Failed to fetch active listings: ${activeListingsError.message}`
+          );
 
         const { count: totalSold, error: totalSoldError } = await supabase
           .from("products")
@@ -104,7 +120,10 @@ function FarmerDashboard() {
           .eq("farmer_id", farmerData.id)
           .eq("status", "sold_out");
 
-        if (totalSoldError) throw new Error(`Failed to fetch total sold: ${totalSoldError.message}`);
+        if (totalSoldError)
+          throw new Error(
+            `Failed to fetch total sold: ${totalSoldError.message}`
+          );
 
         setStats({
           totalListings: totalListings || 0,
@@ -112,7 +131,8 @@ function FarmerDashboard() {
           totalSold: totalSold || 0,
         });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Failed to load profile";
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to load profile";
         setError(errorMessage);
       } finally {
         setLoading(false);
@@ -125,8 +145,10 @@ function FarmerDashboard() {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
+      notification.info("You have been logged out successfully");
       navigate("/");
     } catch (err) {
+      notification.error("Failed to logout");
       setError("Failed to logout");
     }
   };
@@ -148,7 +170,10 @@ function FarmerDashboard() {
         type: profile?.land_type || "Not set",
       },
       walletDisplay: profile?.wallet_address
-        ? `${profile.wallet_address.slice(0, 6)}...${profile.wallet_address.slice(-4)}`
+        ? `${profile.wallet_address.slice(
+            0,
+            6
+          )}...${profile.wallet_address.slice(-4)}`
         : "Not connected",
     }),
     [profile]
@@ -157,7 +182,11 @@ function FarmerDashboard() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-        <LoadingSpinner text="Loading your farmer profile..." fullScreen className="animate-fade-in" />
+        <LoadingSpinner
+          text="Loading your farmer profile..."
+          fullScreen
+          className="animate-fade-in"
+        />
       </div>
     );
   }
@@ -200,7 +229,9 @@ function FarmerDashboard() {
                 )}
                 <div>
                   <h1 className="text-3xl font-bold">Farmer Dashboard</h1>
-                  <p className="text-emerald-100">Welcome back, {profileInfo.displayName}</p>
+                  <p className="text-emerald-100">
+                    Welcome back, {profileInfo.displayName}
+                  </p>
                 </div>
               </div>
               <button
@@ -233,7 +264,9 @@ function FarmerDashboard() {
 
           {/* Profile Information Section */}
           <div className="bg-white rounded-xl shadow-lg p-6 transition-all duration-300">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-6">Profile Information</h2>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-6">
+              Profile Information
+            </h2>
             {error && (
               <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-lg animate-fade-in">
                 {error}
@@ -245,28 +278,42 @@ function FarmerDashboard() {
                   <User className="h-5 w-5 text-gray-400" />
                   <div>
                     <p className="text-sm text-gray-600 font-medium">Name</p>
-                    <p className="font-semibold text-gray-900">{profileInfo.displayName}</p>
+                    <p className="font-semibold text-gray-900">
+                      {profileInfo.displayName}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Users className="h-5 w-5 text-gray-400" />
                   <div>
-                    <p className="text-sm text-gray-600 font-medium">Nominee Name</p>
-                    <p className="font-semibold text-gray-900">{profile?.nominee_name || "Not set"}</p>
+                    <p className="text-sm text-gray-600 font-medium">
+                      Nominee Name
+                    </p>
+                    <p className="font-semibold text-gray-900">
+                      {profile?.nominee_name || "Not set"}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Ruler className="h-5 w-5 text-gray-400" />
                   <div>
-                    <p className="text-sm text-gray-600 font-medium">Land Size</p>
-                    <p className="font-semibold text-gray-900">{profileInfo.landDetails.size}</p>
+                    <p className="text-sm text-gray-600 font-medium">
+                      Land Size
+                    </p>
+                    <p className="font-semibold text-gray-900">
+                      {profileInfo.landDetails.size}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Ruler className="h-5 w-5 text-gray-400" />
                   <div>
-                    <p className="text-sm text-gray-600 font-medium">Land Type</p>
-                    <p className="font-semibold text-gray-900">{profileInfo.landDetails.type}</p>
+                    <p className="text-sm text-gray-600 font-medium">
+                      Land Type
+                    </p>
+                    <p className="font-semibold text-gray-900">
+                      {profileInfo.landDetails.type}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -275,35 +322,47 @@ function FarmerDashboard() {
                   <Phone className="h-5 w-5 text-gray-400" />
                   <div>
                     <p className="text-sm text-gray-600 font-medium">Phone</p>
-                    <p className="font-semibold text-gray-900">{profile?.phone_number || "Not set"}</p>
+                    <p className="font-semibold text-gray-900">
+                      {profile?.phone_number || "Not set"}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Mail className="h-5 w-5 text-gray-400" />
                   <div>
                     <p className="text-sm text-gray-600 font-medium">Email</p>
-                    <p className="font-semibold text-gray-900">{profile?.email}</p>
+                    <p className="font-semibold text-gray-900">
+                      {profile?.email}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Wallet className="h-5 w-5 text-gray-400" />
                   <div>
                     <p className="text-sm text-gray-600 font-medium">Wallet</p>
-                    <p className="font-semibold text-gray-900">{profileInfo.walletDisplay}</p>
+                    <p className="font-semibold text-gray-900">
+                      {profileInfo.walletDisplay}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <MapPin className="h-5 w-5 text-gray-400" />
                   <div>
-                    <p className="text-sm text-gray-600 font-medium">Location</p>
-                    <p className="font-semibold text-gray-900">{profile?.complete_address || "Not set"}</p>
+                    <p className="text-sm text-gray-600 font-medium">
+                      Location
+                    </p>
+                    <p className="font-semibold text-gray-900">
+                      {profile?.complete_address || "Not set"}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <Map className="h-5 w-5 text-gray-400" />
                   <div>
                     <p className="text-sm text-gray-600 font-medium">Pincode</p>
-                    <p className="font-semibold text-gray-900">{profile?.pincode || "Not set"}</p>
+                    <p className="font-semibold text-gray-900">
+                      {profile?.pincode || "Not set"}
+                    </p>
                   </div>
                 </div>
               </div>

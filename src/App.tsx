@@ -6,12 +6,19 @@ import {
   Outlet,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { publicRoutes, farmerRoutes, buyerRoutes, sharedRoutes, adminRoutes } from "./routes";
+import {
+  publicRoutes,
+  farmerRoutes,
+  buyerRoutes,
+  sharedRoutes,
+  adminRoutes,
+} from "./routes";
 import ProtectedRoute from "./components/ProtectedRoute";
 import LoadingSpinner from "./components/shared/LoadingSpinner";
 import AdminProtectedRoute from "../client/admin/components/AdminProtectedRoute";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import { NotificationProvider } from "./context/NotificationContext";
 
 // Lazy-loaded components
 const AuthHome = lazy(() => import("../client/pages/Home"));
@@ -78,9 +85,11 @@ const MainLayout = memo(({ isAuthenticated, userType }: MainLayoutProps) => {
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <Router>
-        <AppContent />
-      </Router>
+      <NotificationProvider>
+        <Router>
+          <AppContent />
+        </Router>
+      </NotificationProvider>
     </AuthProvider>
   );
 };
@@ -106,7 +115,11 @@ const AppContent: React.FC = () => {
         {/* Admin Routes */}
         {adminRoutes.map((route) =>
           route.path === "/admin/login" ? (
-            <Route path={route.path} element={<route.element />} key={route.key} />
+            <Route
+              path={route.path}
+              element={<route.element />}
+              key={route.key}
+            />
           ) : (
             <Route
               path="/admin/*"

@@ -2,44 +2,66 @@
 pragma solidity ^0.8.0;
 
 contract AgriculturalContract {
-    // Struct to store contract details
-    struct ContractDetails {
+    address public owner;
+    uint256 public contractCounter;
+    uint256 public platformFeePercentage = 5; // 5% fee
+    uint256 public confirmationPeriod = 7 days;
+    uint256 public totalPlatformFees;
+
+    enum ContractStatus { PENDING, FUNDED, IN_PROGRESS, COMPLETED, DISPUTED, RESOLVED }
+
+    struct BasicDetails {
         uint256 contractId;
         address farmerWallet;
         address buyerWallet;
         string cropName;
         uint256 quantity;
-        uint256 amount; // Total amount in Wei (ETH)
-        uint256 advanceAmount; // Advance amount in Wei (ETH)
-        uint256 startDate; // Unix timestamp
-        uint256 endDate; // Unix timestamp
+        uint256 amount;
+        uint256 advanceAmount;
+        uint256 remainingAmount;
+    }
+
+    struct TimeDetails {
+        uint256 startDate;
+        uint256 endDate;
+        uint256 confirmationDeadline;
+    }
+
+    struct DeliveryDetails {
         string deliveryMethod;
         string deliveryLocation;
         string additionalNotes;
-        string status; // PENDING, FUNDED, IN_PROGRESS, DELIVERED, COMPLETED, CANCELLED, DISPUTED
-        uint256 escrowBalance; // Current balance in Wei (ETH)
+    }
+
+    struct StatusDetails {
+        ContractStatus status;
+        uint256 escrowBalance;
         bool farmerConfirmedDelivery;
         bool buyerConfirmedReceipt;
         bool isBuyerInitiated;
     }
 
-    // Mapping to store contracts by ID
-    mapping(uint256 => ContractDetails) public contracts;
-    uint256 public contractCounter;
-    address public owner;
-    uint256 public platformFeePercentage = 5; // 5% fee in basis points (0.05)
-    uint256 public accumulatedFees; // Total fees collected in Wei
+    struct Contract {
+        BasicDetails basic;
+        TimeDetails time;
+        DeliveryDetails delivery;
+        StatusDetails status;
+    }
 
-    // Events for off-chain monitoring
-    event ContractCreated(uint256 indexed contractId, address indexed farmerWallet, address indexed buyerWallet);
-    event ContractStatusUpdated(uint256 indexed contractId, string newStatus);
-    event FundsDeposited(uint256 indexed contractId, uint256 amount);
-    event FundsReleased(uint256 indexed contractId, uint256 amount, address recipient);
-    event DisputeRaised(uint256 indexed contractId, address raisedBy);
-    event PlatformFeesWithdrawn(uint256 amount, address to);
+    mapping(uint256 => Contract) public contracts;
+
+    event ContractCreated(uint256 contractId, address indexed farmer, address indexed buyer, bool isBuyerInitiated);
+    event ContractStatusUpdated(uint256 contractId, ContractStatus status);
+    event FundsDeposited(uint256 contractId, uint256 amount);
+    event FundsReleased(uint256 contractId, uint256 amount);
+    event DisputeRaised(uint256 contractId, address indexed by);
+    event DisputeResolved(uint256 contractId, bool payFarmer);
+    event PlatformFeesWithdrawn(uint256 amount);
+    event DebugValues(uint256 contractId, uint256 amount, uint256 advanceAmount, uint256 escrowBalance);
 
     constructor() {
         owner = msg.sender;
+        contractCounter = 0;
     }
 
     modifier onlyOwner() {
@@ -47,183 +69,239 @@ contract AgriculturalContract {
         _;
     }
 
-    modifier validContract(uint256 _contractId) {
-        require(_contractId > 0 && _contractId <= contractCounter, "Invalid contract ID");
-        _;
-    }
-
-    // Farmer creates a sell contract (no funds required upfront)
     function createSellContract(
-        string memory _cropName,
-        uint256 _quantity,
-        uint256 _amount, // Amount in Wei (ETH)
-        uint256 _startDate,
-        uint256 _endDate,
-        string memory _deliveryMethod,
-        string memory _deliveryLocation,
-        string memory _additionalNotes
+        string memory cropName,
+        uint256 quantity,
+        uint256 amount,
+        uint256 startDate,
+        uint256 endDate
     ) public {
-        require(_amount > 0, "Amount must be greater than 0");
-        require(_startDate < _endDate, "Start date must be before end date");
-
+        require(amount > 0, "Amount must be greater than 0");
         contractCounter++;
-        contracts[contractCounter] = ContractDetails({
-            contractId: contractCounter,
-            farmerWallet: msg.sender,
-            buyerWallet: address(0),
-            cropName: _cropName,
-            quantity: _quantity,
-            amount: _amount,
-            advanceAmount: 0, // No advance for sell contracts initially
-            startDate: _startDate,
-            endDate: _endDate,
-            deliveryMethod: _deliveryMethod,
-            deliveryLocation: _deliveryLocation,
-            additionalNotes: _additionalNotes,
-            status: "PENDING",
-            escrowBalance: 0,
-            farmerConfirmedDelivery: false,
-            buyerConfirmedReceipt: false,
-            isBuyerInitiated: false
+        uint256 contractId = contractCounter;
+        contracts[contractId] = Contract({
+            basic: BasicDetails({
+                contractId: contractId,
+                farmerWallet: msg.sender,
+                buyerWallet: address(0),
+                cropName: cropName,
+                quantity: quantity,
+                amount: amount,
+                advanceAmount: (amount * 20) / 100, // 20% advance
+                remainingAmount: (amount * 80) / 100 // 80% remaining
+            }),
+            time: TimeDetails({
+                startDate: startDate,
+                endDate: endDate,
+                confirmationDeadline: 0
+            }),
+            delivery: DeliveryDetails({
+                deliveryMethod: "",
+                deliveryLocation: "",
+                additionalNotes: ""
+            }),
+            status: StatusDetails({
+                status: ContractStatus.PENDING,
+                escrowBalance: 0,
+                farmerConfirmedDelivery: false,
+                buyerConfirmedReceipt: false,
+                isBuyerInitiated: false
+            })
         });
 
-        emit ContractCreated(contractCounter, msg.sender, address(0));
+        emit ContractCreated(contractId, msg.sender, address(0), false);
+        emit DebugValues(contractId, amount, (amount * 20) / 100, 0);
     }
 
-    // Buyer creates a buy contract (funds escrow immediately)
     function createBuyContract(
-        string memory _cropName,
-        uint256 _quantity,
-        uint256 _amount, // Amount in Wei (ETH)
-        uint256 _startDate,
-        uint256 _endDate,
-        string memory _deliveryMethod,
-        string memory _deliveryLocation,
-        string memory _additionalNotes
+        string memory cropName,
+        uint256 quantity,
+        uint256 amount,
+        uint256 startDate,
+        uint256 endDate,
+        string memory deliveryMethod,
+        string memory deliveryLocation,
+        string memory additionalNotes
     ) public payable {
-        require(_amount > 0, "Amount must be greater than 0");
-        require(msg.value == _amount, "Incorrect ETH amount sent");
-        require(_startDate < _endDate, "Start date must be before end date");
-
+        require(amount > 0, "Amount must be greater than 0");
+        require(msg.value == amount, "Incorrect ETH amount sent");
         contractCounter++;
-        uint256 advance = _amount / 5; // 20% advance
-        contracts[contractCounter] = ContractDetails({
-            contractId: contractCounter,
-            farmerWallet: address(0),
-            buyerWallet: msg.sender,
-            cropName: _cropName,
-            quantity: _quantity,
-            amount: _amount,
-            advanceAmount: advance,
-            startDate: _startDate,
-            endDate: _endDate,
-            deliveryMethod: _deliveryMethod,
-            deliveryLocation: _deliveryLocation,
-            additionalNotes: _additionalNotes,
-            status: "PENDING",
-            escrowBalance: _amount,
-            farmerConfirmedDelivery: false,
-            buyerConfirmedReceipt: false,
-            isBuyerInitiated: true
+        uint256 contractId = contractCounter;
+        contracts[contractId] = Contract({
+            basic: BasicDetails({
+                contractId: contractId,
+                farmerWallet: address(0),
+                buyerWallet: msg.sender,
+                cropName: cropName,
+                quantity: quantity,
+                amount: amount,
+                advanceAmount: (amount * 20) / 100,
+                remainingAmount: (amount * 80) / 100
+            }),
+            time: TimeDetails({
+                startDate: startDate,
+                endDate: endDate,
+                confirmationDeadline: 0
+            }),
+            delivery: DeliveryDetails({
+                deliveryMethod: deliveryMethod,
+                deliveryLocation: deliveryLocation,
+                additionalNotes: additionalNotes
+            }),
+            status: StatusDetails({
+                status: ContractStatus.PENDING,
+                escrowBalance: msg.value,
+                farmerConfirmedDelivery: false,
+                buyerConfirmedReceipt: false,
+                isBuyerInitiated: true
+            })
         });
 
-        emit ContractCreated(contractCounter, address(0), msg.sender);
-        emit FundsDeposited(contractCounter, _amount);
+        emit ContractCreated(contractId, address(0), msg.sender, true);
+        emit DebugValues(contractId, amount, (amount * 20) / 100, msg.value);
     }
 
-    // Buyer accepts a sell contract (funds escrow)
-    function acceptSellContract(uint256 _contractId) public payable validContract(_contractId) {
-        ContractDetails storage contract = contracts[_contractId];
-        require(keccak256(bytes(contract.status)) == keccak256(bytes("PENDING")), "Contract not pending");
-        require(contract.buyerWallet == address(0), "Contract already accepted");
-        require(msg.value == contract.amount, "Incorrect ETH amount sent");
+    function acceptSellContract(
+        uint256 contractId,
+        string memory deliveryMethod,
+        string memory deliveryLocation,
+        string memory additionalNotes
+    ) public payable {
+        Contract storage c = contracts[contractId];
+        require(c.status.status == ContractStatus.PENDING, "Contract not pending");
+        require(c.basic.buyerWallet == address(0), "Already accepted");
+        require(msg.value == c.basic.amount, "Incorrect ETH amount sent");
 
-        contract.buyerWallet = msg.sender;
-        contract.status = "FUNDED";
-        contract.escrowBalance = msg.value;
+        c.basic.buyerWallet = msg.sender;
+        c.status.status = ContractStatus.FUNDED;
+        c.status.escrowBalance = msg.value;
+        c.delivery.deliveryMethod = deliveryMethod;
+        c.delivery.deliveryLocation = deliveryLocation;
+        c.delivery.additionalNotes = additionalNotes;
 
-        emit ContractStatusUpdated(_contractId, "FUNDED");
-        emit FundsDeposited(_contractId, msg.value);
+        emit ContractStatusUpdated(contractId, ContractStatus.FUNDED);
+        emit FundsDeposited(contractId, msg.value);
     }
 
-    // Farmer accepts a buy contract (receives advance)
-    function acceptBuyContract(uint256 _contractId) public validContract(_contractId) {
-        ContractDetails storage contract = contracts[_contractId];
-        require(keccak256(bytes(contract.status)) == keccak256(bytes("PENDING")), "Contract not pending");
-        require(contract.farmerWallet == address(0), "Contract already accepted");
-        require(contract.isBuyerInitiated, "Not a buyer-initiated contract");
+    function acceptBuyContract(uint256 contractId) public {
+        Contract storage c = contracts[contractId];
+        require(c.status.status == ContractStatus.PENDING, "Contract not pending");
+        require(c.basic.farmerWallet == address(0), "Already accepted");
+        require(c.basic.advanceAmount > 0, "Advance amount must be greater than 0");
+        require(c.status.escrowBalance >= c.basic.advanceAmount, "Insufficient escrow balance");
 
-        contract.farmerWallet = msg.sender;
-        contract.status = "FUNDED";
-        contract.escrowBalance -= contract.advanceAmount;
+        c.basic.farmerWallet = msg.sender;
+        c.status.status = ContractStatus.FUNDED;
+        uint256 advance = c.basic.advanceAmount;
+        (bool sent, ) = msg.sender.call{value: advance}("");
+        require(sent, "Failed to send advance");
+        c.status.escrowBalance -= advance;
 
-        payable(msg.sender).transfer(contract.advanceAmount);
-
-        emit ContractStatusUpdated(_contractId, "FUNDED");
-        emit FundsReleased(_contractId, contract.advanceAmount, msg.sender);
+        emit ContractStatusUpdated(contractId, ContractStatus.FUNDED);
+        emit FundsReleased(contractId, advance);
+        emit DebugValues(contractId, c.basic.amount, advance, c.status.escrowBalance);
     }
 
-    // Farmer confirms delivery
-    function confirmDelivery(uint256 _contractId) public validContract(_contractId) {
-        ContractDetails storage contract = contracts[_contractId];
-        require(msg.sender == contract.farmerWallet, "Only farmer can confirm delivery");
-        require(keccak256(bytes(contract.status)) == keccak256(bytes("FUNDED")), "Contract not funded");
+    function confirmDelivery(uint256 contractId) public {
+        Contract storage c = contracts[contractId];
+        require(c.basic.farmerWallet == msg.sender, "Only farmer can confirm delivery");
+        require(c.status.status == ContractStatus.FUNDED, "Contract not funded");
+        c.status.farmerConfirmedDelivery = true;
+        c.status.status = ContractStatus.IN_PROGRESS;
+        c.time.confirmationDeadline = block.timestamp + confirmationPeriod;
 
-        contract.farmerConfirmedDelivery = true;
-        contract.status = "IN_PROGRESS";
-
-        emit ContractStatusUpdated(_contractId, "IN_PROGRESS");
+        emit ContractStatusUpdated(contractId, ContractStatus.IN_PROGRESS);
     }
 
-    // Buyer confirms receipt (releases funds minus fee)
-    function confirmReceipt(uint256 _contractId) public validContract(_contractId) {
-        ContractDetails storage contract = contracts[_contractId];
-        require(msg.sender == contract.buyerWallet, "Only buyer can confirm receipt");
-        require(contract.farmerConfirmedDelivery, "Delivery not confirmed by farmer");
-        require(keccak256(bytes(contract.status)) == keccak256(bytes("IN_PROGRESS")), "Contract not in progress");
+    function confirmReceipt(uint256 contractId) public {
+        Contract storage c = contracts[contractId];
+        require(c.basic.buyerWallet == msg.sender, "Only buyer can confirm receipt");
+        require(c.status.status == ContractStatus.IN_PROGRESS, "Contract not in progress");
+        require(c.status.farmerConfirmedDelivery, "Delivery not confirmed by farmer");
+        c.status.buyerConfirmedReceipt = true;
+        c.status.status = ContractStatus.COMPLETED;
 
-        uint256 fee = (contract.amount * platformFeePercentage) / 100;
-        uint256 farmerPayment = contract.escrowBalance - fee;
+        uint256 platformFee = (c.basic.amount * platformFeePercentage) / 100;
+        uint256 farmerAmount = c.status.escrowBalance - platformFee;
+        totalPlatformFees += platformFee;
+        c.status.escrowBalance = 0;
 
-        contract.status = "COMPLETED";
-        contract.escrowBalance = 0;
-        accumulatedFees += fee;
+        (bool sent, ) = c.basic.farmerWallet.call{value: farmerAmount}("");
+        require(sent, "Failed to send funds to farmer");
 
-        payable(contract.farmerWallet).transfer(farmerPayment);
-
-        emit ContractStatusUpdated(_contractId, "COMPLETED");
-        emit FundsReleased(_contractId, farmerPayment, contract.farmerWallet);
+        emit ContractStatusUpdated(contractId, ContractStatus.COMPLETED);
+        emit FundsReleased(contractId, farmerAmount);
     }
 
-    // Either party raises a dispute
-    function raiseDispute(uint256 _contractId) public validContract(_contractId) {
-        ContractDetails storage contract = contracts[_contractId];
-        require(
-            msg.sender == contract.farmerWallet || msg.sender == contract.buyerWallet,
-            "Only contract parties can raise dispute"
-        );
-        require(
-            keccak256(bytes(contract.status)) != keccak256(bytes("COMPLETED")) &&
-            keccak256(bytes(contract.status)) != keccak256(bytes("CANCELLED")),
-            "Contract already finalized"
-        );
+    function claimRemainingAfterTimeout(uint256 contractId) public {
+        Contract storage c = contracts[contractId];
+        require(c.basic.farmerWallet == msg.sender, "Only farmer can claim");
+        require(c.status.status == ContractStatus.IN_PROGRESS, "Contract not in progress");
+        require(c.time.confirmationDeadline != 0 && block.timestamp > c.time.confirmationDeadline, "Confirmation period not expired");
+        require(!c.status.buyerConfirmedReceipt, "Receipt already confirmed");
 
-        contract.status = "DISPUTED";
-        emit DisputeRaised(_contractId, msg.sender);
+        c.status.status = ContractStatus.COMPLETED;
+        uint256 platformFee = (c.basic.amount * platformFeePercentage) / 100;
+        uint256 farmerAmount = c.status.escrowBalance - platformFee;
+        totalPlatformFees += platformFee;
+        c.status.escrowBalance = 0;
+
+        (bool sent, ) = msg.sender.call{value: farmerAmount}("");
+        require(sent, "Failed to send remaining funds");
+
+        emit ContractStatusUpdated(contractId, ContractStatus.COMPLETED);
+        emit FundsReleased(contractId, farmerAmount);
     }
 
-    // Owner withdraws platform fees
-    function withdrawPlatformFees(address payable _to) public onlyOwner {
-        require(accumulatedFees > 0, "No fees to withdraw");
-        uint256 amount = accumulatedFees;
-        accumulatedFees = 0;
+    function raiseDispute(uint256 contractId) public {
+        Contract storage c = contracts[contractId];
+        require(c.basic.farmerWallet == msg.sender || c.basic.buyerWallet == msg.sender, "Only parties can raise dispute");
+        require(c.status.status == ContractStatus.FUNDED || c.status.status == ContractStatus.IN_PROGRESS, "Invalid status for dispute");
+        c.status.status = ContractStatus.DISPUTED;
 
-        _to.transfer(amount);
-        emit PlatformFeesWithdrawn(amount, _to);
+        emit DisputeRaised(contractId, msg.sender);
+        emit ContractStatusUpdated(contractId, ContractStatus.DISPUTED);
     }
 
-    // Helper function to get contract details
-    function getContractDetails(uint256 _contractId) public view validContract(_contractId) returns (ContractDetails memory) {
-        return contracts[_contractId];
+    function resolveDispute(uint256 contractId, bool payFarmer) public onlyOwner {
+        Contract storage c = contracts[contractId];
+        require(c.status.status == ContractStatus.DISPUTED, "Contract not disputed");
+        c.status.status = ContractStatus.RESOLVED;
+
+        if (payFarmer) {
+            uint256 platformFee = (c.basic.amount * platformFeePercentage) / 100;
+            uint256 farmerAmount = c.status.escrowBalance - platformFee;
+            totalPlatformFees += platformFee;
+            c.status.escrowBalance = 0;
+            (bool sent, ) = c.basic.farmerWallet.call{value: farmerAmount}("");
+            require(sent, "Failed to send funds to farmer");
+            emit FundsReleased(contractId, farmerAmount);
+        } else {
+            (bool sent, ) = c.basic.buyerWallet.call{value: c.status.escrowBalance}("");
+            require(sent, "Failed to refund buyer");
+            c.status.escrowBalance = 0;
+            emit FundsReleased(contractId, c.status.escrowBalance);
+        }
+
+        emit DisputeResolved(contractId, payFarmer);
+        emit ContractStatusUpdated(contractId, ContractStatus.RESOLVED);
+    }
+
+    function withdrawPlatformFees() public onlyOwner {
+        uint256 amount = totalPlatformFees;
+        totalPlatformFees = 0;
+        (bool sent, ) = owner.call{value: amount}("");
+        require(sent, "Failed to withdraw fees");
+        emit PlatformFeesWithdrawn(amount);
+    }
+
+    function getContractDetails(uint256 contractId) public view returns (
+        BasicDetails memory basic,
+        TimeDetails memory time,
+        DeliveryDetails memory delivery,
+        StatusDetails memory status
+    ) {
+        Contract storage c = contracts[contractId];
+        return (c.basic, c.time, c.delivery, c.status);
     }
 }

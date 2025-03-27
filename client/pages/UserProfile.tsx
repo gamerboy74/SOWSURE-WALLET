@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import ProductCard from "../components/profile/ProductCard";
 import { useChat } from "../hooks/useChat";
 import ChatWindow from "../components/chat/ChatWindow";
+import { useNotification } from "../../src/context/NotificationContext";
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -58,6 +59,7 @@ const UserProfile: React.FC = () => {
   const [currentUserType, setCurrentUserType] = useState<
     "Farmer" | "Buyer" | null
   >(null);
+  const notification = useNotification();
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -280,6 +282,26 @@ const UserProfile: React.FC = () => {
     initiateChat();
   }, [showChat, closeChat, initiateChat]);
 
+  const handleFollow = async () => {
+    try {
+      // ...follow logic...
+      if (user) {
+        notification.success(`You are now following ${user.name}`);
+      }
+    } catch (err) {
+      notification.error("Failed to follow user");
+    }
+  };
+
+  const handleContact = async () => {
+    try {
+      // ...contact logic...
+      notification.success("Message sent successfully");
+    } catch (err) {
+      notification.error("Failed to send message");
+    }
+  };
+
   const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name
       .toLowerCase()
@@ -426,6 +448,7 @@ const UserProfile: React.FC = () => {
                     product.seller.image || "https://via.placeholder.com/112",
                 }}
                 currentUserId={product.currentUserId}
+                fiatPrice={""}
               />
             ))
           ) : (
