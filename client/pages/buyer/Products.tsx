@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
 import { WalletService } from "../../services/wallet.service";
 import { useWallet } from "../../hooks/useWallet";
-import { ethers } from "ethers";
 import {
   Plus,
   Search,
@@ -19,7 +18,6 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import ProductCard from "../ProductCard";
 import DialogBox from "../DialogBox";
-import { CONTRACT_ADDRESS, CONTRACT_ABI } from "../../../contract/AgriculturalContract";
 import { toast } from "react-toastify";
 import { useNotification } from '../../../src/context/NotificationContext';
 
@@ -180,9 +178,9 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 function Products() {
   const notification = useNotification();
-  
   const [state, setState] = useState<ProductsState>(initialState);
   const { address, balance, prices, loading: walletLoading } = useWallet();
+  const ethPriceInINR = prices.eth || 200000;
 
   useEffect(() => {
     const fetchUserId = async () => {
@@ -212,76 +210,19 @@ function Products() {
         .select("id")
         .eq("user_id", state.userId)
         .maybeSingle();
-  
+
       if (buyerError) throw new Error(`Supabase buyer fetch error: ${buyerError.message}`);
       if (!buyerData) throw new Error("You must be registered as a buyer");
-  
+
       const { data, error } = await supabase
         .from("products")
-        .select("*, smart_contracts!contract_id(status)") // Fetch related smart_contracts status
+        .select("*, smart_contracts!contract_id(status)")
         .eq("buyer_id", buyerData.id)
         .eq("type", "buy")
         .order("created_at", { ascending: false });
-  
+
       if (error) throw new Error(`Supabase products fetch error: ${error.message}`);
-  
-      const provider = WalletService.provider || new ethers.JsonRpcProvider("http://localhost:8545");
-      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-  
-      // Mapping of blockchain numeric status to database string status
-      const statusMap: { [key: string]: string } = {
-        "0": "PENDING",
-        "1": "FUNDED",
-        "2": "IN_PROGRESS",
-        "3": "DELIVERED",
-        "4": "COMPLETED",
-        "5": "CANCELLED",
-        "6": "DISPUTED",
-        "7": "RESOLVED",
-      };
-  
-      const updatedProducts = await Promise.all(
-        data.map(async (product: Product) => {
-          if (product.contract_id) {
-            try {
-              const contractDetails = await contract.getContractDetails(product.contract_id);
-              const onChainStatusNumeric = contractDetails.status.status.toString();
-              const onChainStatus = statusMap[onChainStatusNumeric] || "PENDING"; // Default to PENDING if unknown
-  
-              // Sync smart_contracts status if different
-              if (product.smart_contracts?.status !== onChainStatus) {
-                const { error: updateError } = await supabase
-                  .from("smart_contracts")
-                  .update({ status: onChainStatus })
-                  .eq("contract_id", product.contract_id);
-                if (updateError) {
-                  console.error(`Failed to update contract ${product.contract_id} status:`, updateError);
-                }
-              }
-  
-              // Sync product status if needed
-              if (onChainStatus !== "PENDING" && product.status === "active") {
-                const { error: productUpdateError } = await supabase
-                  .from("products")
-                  .update({ status: "funded" })
-                  .eq("id", product.id);
-                if (productUpdateError) {
-                  console.error(`Failed to update product ${product.id} status:`, productUpdateError);
-                } else {
-                  product.status = "funded";
-                }
-              }
-  
-              product.smart_contracts = { status: onChainStatus };
-            } catch (err) {
-              console.error(`Error fetching contract details for ID ${product.contract_id}:`, err);
-            }
-          }
-          return product;
-        })
-      );
-  
-      setState((prev) => ({ ...prev, products: updatedProducts || [], loading: false }));
+      setState((prev) => ({ ...prev, products: data || [], loading: false }));
     } catch (err) {
       console.error("Error loading products:", err);
       setState((prev) => ({
@@ -291,8 +232,45 @@ function Products() {
       }));
     }
   }, [state.userId]);
+
   useEffect(() => {
     if (state.userId) loadProducts();
+  }, [state.userId, loadProducts]);
+
+  useEffect(() => {
+    if (!state.userId) return;
+
+    const fetchBuyerAndSubscribe = async () => {
+      const { data: buyerData, error: buyerError } = await supabase
+        .from("buyers")
+        .select("id")
+        .eq("user_id", state.userId)
+        .maybeSingle();
+
+      if (buyerError || !buyerData) return;
+
+      const subscription = supabase
+        .channel(`products:buyer:${buyerData.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "products",
+            filter: `buyer_id=eq.${buyerData.id}`,
+          },
+          () => {
+            loadProducts();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        subscription.unsubscribe();
+      };
+    };
+
+    fetchBuyerAndSubscribe();
   }, [state.userId, loadProducts]);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -333,7 +311,7 @@ function Products() {
     const errors: Partial<ProductFormData> = {};
     if (!state.formData.name.trim()) errors.name = "Name is required";
     const price = parseFloat(state.formData.price);
-    if (isNaN(price) || price <= 0) errors.price = "Price must be a positive number";
+    if (isNaN(price) || price <= 0) errors.price = "Price must be a positive number (INR)";
     const quantity = parseFloat(state.formData.quantity);
     if (isNaN(quantity) || quantity <= 0) errors.quantity = "Quantity must be a positive number";
     return errors;
@@ -343,7 +321,7 @@ function Products() {
     const errors: Partial<ProductFormData> = {};
     if (!state.formData.name.trim()) errors.name = "Name is required";
     const price = parseFloat(state.formData.price);
-    if (isNaN(price) || price <= 0) errors.price = "Price must be a positive number";
+    if (isNaN(price) || price <= 0) errors.price = "Price must be a positive number (INR)";
     const quantity = parseFloat(state.formData.quantity);
     if (isNaN(quantity) || quantity <= 0) errors.quantity = "Quantity must be a positive number";
     if (!state.formData.location.trim()) errors.location = "Location is required";
@@ -379,8 +357,6 @@ function Products() {
       if (authError) throw new Error(`Auth error: ${authError.message}`);
       if (!user) throw new Error("No authenticated user");
 
-      console.log("Authenticated User ID:", user.id);
-
       const { data: buyerData, error: buyerError } = await supabase
         .from("buyers")
         .select("id, user_id")
@@ -389,14 +365,19 @@ function Products() {
       if (buyerError) throw new Error(`Buyer fetch error: ${buyerError.message}`);
       if (!buyerData) throw new Error("You must be registered as a buyer");
 
-      console.log("Buyer ID:", buyerData.id, "Buyer User ID:", buyerData.user_id);
+      const { data: walletData, error: walletError } = await supabase
+        .from("wallets")
+        .select("id")
+        .eq("user_id", user.id)
+        .single();
+      if (walletError) throw new Error(`Wallet fetch error: ${walletError.message}`);
+      if (!walletData) throw new Error("Wallet not found");
 
-      const pricePerUnit = parseFloat(state.formData.price);
+      const priceInINR = parseFloat(state.formData.price);
       const quantity = parseFloat(state.formData.quantity);
-      const totalPriceINR = pricePerUnit * quantity;
-      const amountEth = (totalPriceINR / prices.eth).toFixed(8);
-      if (!prices.eth) throw new Error("ETH price data unavailable");
-      if (parseFloat(balance.eth) < parseFloat(amountEth)) throw new Error("Insufficient ETH balance");
+      const totalPriceINR = priceInINR * quantity;
+      const amountEth = (totalPriceINR / ethPriceInINR).toFixed(8);
+      if (parseFloat(balance.eth) < parseFloat(amountEth)) throw new Error(`Insufficient ETH balance: ${balance.eth} ETH available, ${amountEth} ETH required`);
 
       const productData = {
         buyer_id: buyerData.id,
@@ -404,12 +385,12 @@ function Products() {
         type: "buy" as const,
         name: state.formData.name,
         description: state.formData.description || null,
-        price: pricePerUnit,
+        price: priceInINR,
         quantity: quantity,
         unit: state.formData.unit,
         category: state.formData.category,
         image_url: state.formData.image_url || null,
-        status: state.formData.status,
+        status: "active",
         location: state.formData.location,
       };
 
@@ -445,123 +426,42 @@ function Products() {
         if (error) throw new Error(`Insert error: ${error.message}`);
         productId = data.id;
 
-        if (address) {
-          const walletInfo = await WalletService.getWalletInfo();
-          if (!walletInfo) throw new Error("No wallet found");
-          const wallet = new ethers.Wallet(walletInfo.privateKey, WalletService.provider);
-          const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, wallet);
+        const { txHash, contractId } = await WalletService.createBuyContract(walletData.id, {
+          cropName: state.formData.name,
+          quantity: state.formData.quantity,
+          amount: amountEth,
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          deliveryMethod: state.formData.delivery_method,
+          deliveryLocation: state.formData.delivery_location,
+          additionalNotes: state.formData.additional_notes || "",
+        });
 
-          const tx = await contract.createBuyContract(
-            state.formData.name,
-            ethers.parseUnits(state.formData.quantity, 18),
-            ethers.parseEther(amountEth),
-            Math.floor(Date.now() / 1000),
-            Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-            state.formData.delivery_method,
-            state.formData.delivery_location,
-            state.formData.additional_notes || "",
-            { value: ethers.parseEther(amountEth) }
-          );
+        const { error: updateError } = await supabase
+          .from("products")
+          .update({ contract_id: contractId })
+          .eq("id", productId);
+        if (updateError) throw new Error(`Contract ID update error: ${updateError.message}`);
 
-          const receipt = await tx.wait();
-          const contractCreatedEvent = receipt.logs
-            .map((log: ethers.Log) => {
-              try {
-                return contract.interface.parseLog(log);
-              } catch (e) {
-                return null;
-              }
-            })
-            .find((event: ethers.LogDescription | null) => event?.name === "ContractCreated");
-
-          if (!contractCreatedEvent) throw new Error("ContractCreated event not found in transaction receipt");
-
-          const contractId = contractCreatedEvent.args.contractId.toString();
-          console.log("Created Buy Contract ID:", contractId);
-
-          // Verify the contract's initial state
-          const contractDetails = await contract.getContractDetails(contractId);
-          const initialStatus = contractDetails.status.status.toString();
-          const initialFarmerWallet = contractDetails.basic.farmerWallet;
-          if (initialStatus !== "0" || initialFarmerWallet !== ethers.ZeroAddress) {
-            throw new Error(
-              `Contract ID ${contractId} not initialized correctly. Status: ${initialStatus}, Farmer Wallet: ${initialFarmerWallet}`
-            );
-          }
-
-          const { error: rpcError } = await supabase.rpc("sync_buyer_contract_creation", {
-            p_contract_id: Number(contractId),
-            p_buyer_id: buyerData.id,
-            p_crop_name: state.formData.name,
-            p_quantity: Number(state.formData.quantity),
-            p_amount_eth: Number(amountEth),
-            p_start_date: new Date().toISOString(),
-            p_end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-            p_delivery_method: state.formData.delivery_method,
-            p_delivery_location: state.formData.delivery_location,
-            p_additional_notes: state.formData.additional_notes || "",
-            p_tx_hash: tx.hash,
-            p_contract_address: CONTRACT_ADDRESS,
-          });
-
-          if (rpcError) throw new Error(`RPC sync_buyer_contract_creation error: ${rpcError.message}`);
-
-          const { error: updateError } = await supabase
-            .from("products")
-            .update({ contract_id: contractId })
-            .eq("id", productId);
-          if (updateError) throw new Error(`Contract ID update error: ${updateError.message}`);
-
-          // Manually insert notification for the buyer
-          const { error: buyerNotificationError } = await supabase
-            .from("notifications")
-            .insert({
-              user_id: buyerData.user_id,
-              contract_id: Number(contractId),
-              title: "Buy Contract Created",
-              message: `Your contract #${contractId} for ${state.formData.name} has been created and funded.`,
-              type: "order",
-              data: {
-                contract_id: contractId,
-                amount_eth: amountEth,
-              },
-              created_at: new Date().toISOString(),
-            });
-          if (buyerNotificationError) {
-            console.error("Error inserting buyer notification:", buyerNotificationError);
-          } else {
-            // Show toast notification to the buyer
-            toast.success(`Contract #${contractId} created successfully!`);
-          }
-
-          // Notify all farmers about the new buy request
-          const { data: farmers, error: farmersError } = await supabase
-            .from("farmers")
-            .select("user_id");
-          if (farmersError) {
-            console.error("Error fetching farmers for notification:", farmersError);
-          } else {
-            const farmerNotifications = farmers.map((farmer: { user_id: string }) => ({
-              user_id: farmer.user_id,
-              contract_id: Number(contractId),
-              title: "New Buy Request Available",
-              message: `A new buy request for ${state.formData.name} (Contract #${contractId}) is available.`,
-              type: "order",
-              data: {
-                contract_id: contractId,
-                product_id: productId,
-              },
-              created_at: new Date().toISOString(),
-            }));
-
-            const { error: farmerNotificationError } = await supabase
-              .from("notifications")
-              .insert(farmerNotifications);
-            if (farmerNotificationError) {
-              console.error("Error inserting farmer notifications:", farmerNotificationError);
-            }
-          }
+        const { data: farmers, error: farmersError } = await supabase
+          .from("farmers")
+          .select("user_id");
+        if (farmersError) console.error("Error fetching farmers:", farmersError);
+        else {
+          const notifications = farmers.map((farmer: { user_id: string }) => ({
+            user_id: farmer.user_id,
+            contract_id: Number(contractId),
+            title: "New Buy Request",
+            message: `A new buy request for ${state.formData.name} (Contract #${contractId}) is available.`,
+            type: "order",
+            data: { contract_id: contractId, product_id: productId },
+            created_at: new Date().toISOString(),
+          }));
+          const { error: notifyError } = await supabase.from("notifications").insert(notifications);
+          if (notifyError) console.error("Error sending notifications:", notifyError);
         }
+
+        toast.success(`Buy contract #${contractId} created successfully! Tx: ${txHash}`);
       }
 
       await loadProducts();
@@ -574,7 +474,7 @@ function Products() {
         step: 1,
         submitting: false,
       }));
-      notification.success('Product created successfully!');
+      notification.success('Buy request created successfully!');
     } catch (err) {
       console.error("Error saving product:", err);
       setState((prev) => ({
@@ -582,7 +482,7 @@ function Products() {
         error: err instanceof Error ? err.message : "Failed to save product",
         submitting: false,
       }));
-      notification.error('Failed to create product');
+      notification.error('Failed to create buy request');
     }
   };
 
@@ -614,102 +514,49 @@ function Products() {
   const confirmDelete = async () => {
     if (!state.productToDelete) return;
     const id = state.productToDelete.id;
-  
     try {
       setState((prev) => ({ ...prev, deleting: id, error: null, showDeleteDialog: false }));
-  
+
       const { data: product, error: fetchError } = await supabase
         .from("products")
-        .select("image_url, contract_id")
+        .select("contract_id")
         .eq("id", id)
         .single();
       if (fetchError) throw new Error(`Fetch product error: ${fetchError.message}`);
-  
-      const deleteRelatedData = async () => {
-        if (product?.image_url) {
-          const filePath = product.image_url.split("/product-images/")[1];
-          if (filePath) {
-            const { error: storageError } = await supabase.storage
-              .from("product-images")
-              .remove([filePath]);
-            if (storageError) console.error("Error deleting image:", storageError);
-          }
-        }
-  
-        if (product?.contract_id) {
-          const { data: wallet } = await supabase
-            .from("wallets")
-            .select("id")
-            .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-            .single();
-          if (!wallet) throw new Error("Wallet not found");
-  
-          // Cancel the contract on-chain
-          const txHash = await WalletService.cancelContract(wallet.id, product.contract_id);
-          console.log(`Contract ${product.contract_id} cancelled with txHash: ${txHash}`);
-  
-          // Related data cleanup is handled by WalletService.cancelContract for the smart_contracts table
-          const tablesToClean = [
-            "wallet_transactions",
-            "notifications",
-            "contract_events",
-            "platform_fees",
-            "disputes",
-          ];
-  
-          for (const table of tablesToClean) {
-            const { error } = await supabase
-              .from(table)
-              .delete()
-              .eq("contract_id", product.contract_id);
-            if (error) throw new Error(`${table} delete error: ${error.message}`);
-          }
-        }
-  
-        const { data: chats, error: chatsError } = await supabase
-          .from("chats")
+
+      if (product.contract_id) {
+        const { data: wallet } = await supabase
+          .from("wallets")
           .select("id")
-          .eq("product_id", id);
-        if (chatsError) throw new Error(`Chats fetch error: ${chatsError.message}`);
-  
-        if (chats && chats.length > 0) {
-          const chatIds = chats.map((chat) => chat.id);
-          const { error: messagesError } = await supabase
-            .from("messages")
-            .delete()
-            .in("chat_id", chatIds);
-          if (messagesError) throw new Error(`Messages delete error: ${messagesError.message}`);
-  
-          const { error: chatsDeleteError } = await supabase
-            .from("chats")
-            .delete()
-            .in("id", chatIds);
-          if (chatsDeleteError) throw new Error(`Chats delete error: ${chatsDeleteError.message}`);
-        }
-  
-        const { error: deleteError } = await supabase
-          .from("products")
-          .delete()
-          .eq("id", id);
-        if (deleteError) throw new Error(`Product delete error: ${deleteError.message}`);
-      };
-  
-      await deleteRelatedData();
+          .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+          .single();
+        if (!wallet) throw new Error("Wallet not found");
+
+        await WalletService.cancelContract(wallet.id, Number(product.contract_id));
+      }
+
+      const { error: deleteError } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", id);
+      if (deleteError) throw new Error(`Delete error: ${deleteError.message}`);
+
       await loadProducts();
       setState((prev) => ({ ...prev, deleting: null, productToDelete: null }));
-      notification.success("Product and related data deleted successfully!");
+      notification.success("Buy request deleted successfully!");
     } catch (err) {
-      console.error("Error deleting product and related data:", err);
+      console.error("Error deleting product:", err);
       setState((prev) => ({
         ...prev,
-        error: err instanceof Error ? err.message : "Failed to delete product and related data",
+        error: err instanceof Error ? err.message : "Failed to delete product",
         deleting: null,
         showDeleteDialog: false,
         productToDelete: null,
       }));
-      notification.error("Failed to delete product and related data");
+      notification.error("Failed to delete buy request");
     }
   };
+
   const cancelDelete = () => {
     setState((prev) => ({ ...prev, showDeleteDialog: false, productToDelete: null }));
   };
@@ -747,11 +594,9 @@ function Products() {
         <div className="mt-6">
           <Skeleton height={40} className="mb-4" />
           <div className="product-grid">
-            {Array(4)
-              .fill(0)
-              .map((_, i) => (
-                <Skeleton key={i} height={200} />
-              ))}
+            {Array(4).fill(0).map((_, i) => (
+              <Skeleton key={i} height={200} />
+            ))}
           </div>
         </div>
       </div>
@@ -887,7 +732,7 @@ function Products() {
                 </div>
                 <div>
                   <label htmlFor="price" className="block text-sm font-medium text-gray-700">
-                    Price (₹)
+                    Price (₹ per unit)
                   </label>
                   <input
                     type="number"
@@ -1155,7 +1000,9 @@ function Products() {
               onEdit={handleEdit}
               onDelete={() => handleDelete(product)}
               deleting={state.deleting}
-              handleImageError={handleProductImageError} priceDisplay={""}            />
+              handleImageError={handleProductImageError}
+              priceDisplay={`₹${product.price}`}
+            />
           ))}
         </div>
       </div>

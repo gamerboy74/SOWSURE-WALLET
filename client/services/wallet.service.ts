@@ -863,7 +863,7 @@ export class WalletService {
   }) {
     const walletInfo = await this.getWalletInfo();
     if (!walletInfo) throw new Error("No wallet found");
-
+  
     const wallet = new Wallet(walletInfo.privateKey, this.provider);
     const contractWithSigner = this.sellContract.connect(wallet) as Contract & {
       acceptSellContract(
@@ -873,43 +873,76 @@ export class WalletService {
         additionalNotes: string,
         overrides?: { value?: bigint; gasLimit?: number }
       ): Promise<TransactionResponse>;
+      getContractDetails(contractId: number): Promise<any>;
+      estimateGas: {
+        acceptSellContract(
+          contractId: number,
+          deliveryMethod: string,
+          deliveryLocation: string,
+          additionalNotes: string,
+          overrides?: { value?: bigint }
+        ): Promise<bigint>;
+      };
     };
-
+  
+    // Fetch contract details to get the exact amount
     const contractDetails = await contractWithSigner.getContractDetails(contractId);
     const amountWei = contractDetails.basic.amount;
+    console.log(`Contract ${contractId} requires ${ethers.formatEther(amountWei)} ETH`);
+  
+    // Check buyer's balance
     const buyerBalance = await this.provider.getBalance(wallet.address);
     if (buyerBalance < amountWei) {
-      throw new Error(`Insufficient balance: ${formatEther(buyerBalance)} ETH available, ${formatEther(amountWei)} ETH required`);
+      throw new Error(`Insufficient balance: ${ethers.formatEther(buyerBalance)} ETH available, ${ethers.formatEther(amountWei)} ETH required`);
     }
-
+  
+    // Estimate gas dynamically
+    const gasEstimate = await contractWithSigner.estimateGas.acceptSellContract(
+      contractId,
+      params.deliveryMethod,
+      params.deliveryLocation,
+      params.additionalNotes,
+      { value: amountWei }
+    );
+    const feeData = await this.provider.getFeeData();
+    const gasCost = gasEstimate * (feeData.gasPrice ?? 0n);
+    const totalCost = amountWei.add(gasCost);
+  
+    if (buyerBalance < totalCost) {
+      throw new Error(`Insufficient balance including gas: ${ethers.formatEther(buyerBalance)} ETH available, ${ethers.formatEther(totalCost)} ETH required`);
+    }
+  
+    // Execute transaction
     const tx = await contractWithSigner.acceptSellContract(
       contractId,
       params.deliveryMethod,
       params.deliveryLocation,
       params.additionalNotes,
-      { value: amountWei, gasLimit: 300000 }
+      { value: amountWei, gasLimit: Number((gasEstimate * 120n) / 100n) } // 20% buffer
     );
-
+    console.log(`Accepting sell contract: contractId=${contractId}, txHash=${tx.hash}, sent ${ethers.formatEther(amountWei)} ETH`);
+  
+    // Sync with Supabase
     const { data: buyer } = await supabase
       .from("buyers")
       .select("id")
       .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
       .single();
     if (!buyer) throw new Error("Buyer not found");
-
-    console.log(`Accepting sell contract: contractId=${contractId}, txHash=${tx.hash}`);
-
+  
     const { error: rpcError } = await supabase.rpc("sync_sell_contract_acceptance", {
       p_contract_id: contractId,
       p_buyer_id: buyer.id,
-      p_amount_eth: parseFloat(formatEther(amountWei)),
+      p_amount_eth: parseFloat(ethers.formatEther(amountWei)),
       p_tx_hash: tx.hash,
+      p_delivery_method: params.deliveryMethod,
+      p_delivery_location: params.deliveryLocation,
+      p_additional_notes: params.additionalNotes,
     });
     if (rpcError) {
-      console.error(`RPC error for contractId=${contractId}, txHash=${tx.hash}: ${rpcError.message}`);
       throw new Error(`RPC sync_sell_contract_acceptance error: ${rpcError.message}`);
     }
-
+  
     const receipt = await tx.wait();
     if (!receipt || receipt.status !== 1) throw new Error(`Transaction failed: ${tx.hash}`);
     return tx.hash;

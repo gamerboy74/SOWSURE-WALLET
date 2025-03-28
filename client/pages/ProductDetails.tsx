@@ -96,7 +96,7 @@ interface Product {
 interface ContractDetails {
   contract_id: string;
   status: string;
-  amount_eth: string; // String to match DECIMAL(20,8)
+  amount_eth: string;
   escrow_balance_eth: string;
   farmer_confirmed_delivery: boolean;
   buyer_confirmed_receipt: boolean;
@@ -165,7 +165,6 @@ function ProductDetails() {
     else setState((prev) => ({ ...prev, profileImgError: true }));
   }, []);
 
-  // Fetch ETH price
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
@@ -178,7 +177,6 @@ function ProductDetails() {
     fetchInitialData();
   }, []);
 
-  // Fetch and sync contract details
   useEffect(() => {
     const fetchContractDetails = async () => {
       if (!product?.contract_id) {
@@ -237,7 +235,6 @@ function ProductDetails() {
     fetchContractDetails();
   }, [product?.contract_id]);
 
-  // Real-time contract updates
   useEffect(() => {
     if (product?.contract_id) {
       const subscription = supabase
@@ -311,6 +308,7 @@ function ProductDetails() {
         if (!receipt || receipt.status !== 1) throw new Error(`Transaction failed: ${tx.hash}`);
         txHash = tx.hash;
 
+        // Call sync_farmer_acceptance
         const { error: rpcError } = await supabase.rpc("sync_farmer_acceptance", {
           p_contract_id: Number(product.contract_id),
           p_farmer_id: farmer.id,
@@ -318,12 +316,15 @@ function ProductDetails() {
         });
         if (rpcError) throw new Error(`RPC sync_farmer_acceptance error: ${rpcError.message}`);
 
-        await supabase
+        // Update products table after successful smart_contracts update
+        const { error: updateError } = await supabase
           .from("products")
-          .update({ status: "funded" })
+          .update({ status: "funded", farmer_id: farmer.id })
           .eq("id", product.id);
+        if (updateError) throw new Error(`Product update error: ${updateError.message}`);
 
         toast.success(`Buy contract accepted! Tx: ${txHash}`);
+        navigate(ROUTES.MARKETPLACE);
       } else if (product.type === "sell" && isBuyer) {
         const { data: buyer, error: buyerError } = await supabase
           .from("buyers")
@@ -374,6 +375,7 @@ function ProductDetails() {
           .eq("id", product.id);
 
         toast.success(`Sell contract accepted! Tx: ${txHash}`);
+        navigate(ROUTES.MARKETPLACE);
       } else {
         throw new Error("Invalid action for your role or product type");
       }
@@ -388,6 +390,8 @@ function ProductDetails() {
         actionLoading: false,
       }));
       toast.error(errorMessage);
+    } finally {
+      setState((prev) => ({ ...prev, actionLoading: false }));
     }
   };
 
