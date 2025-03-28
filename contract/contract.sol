@@ -8,7 +8,7 @@ contract AgriculturalContract {
     uint256 public confirmationPeriod = 7 days;
     uint256 public totalPlatformFees;
 
-    enum ContractStatus { PENDING, FUNDED, IN_PROGRESS, COMPLETED, DISPUTED, RESOLVED }
+    enum ContractStatus { PENDING, FUNDED, IN_PROGRESS, COMPLETED, DISPUTED, RESOLVED, CANCELLED }
 
     struct BasicDetails {
         uint256 contractId;
@@ -57,6 +57,7 @@ contract AgriculturalContract {
     event DisputeRaised(uint256 contractId, address indexed by);
     event DisputeResolved(uint256 contractId, bool payFarmer);
     event PlatformFeesWithdrawn(uint256 amount);
+    event ContractCancelled(uint256 contractId, address indexed by);
     event DebugValues(uint256 contractId, uint256 amount, uint256 advanceAmount, uint256 escrowBalance);
 
     constructor() {
@@ -66,6 +67,15 @@ contract AgriculturalContract {
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner can call this function");
+        _;
+    }
+
+    modifier onlyContractParty(uint256 contractId) {
+        Contract storage c = contracts[contractId];
+        require(
+            msg.sender == c.basic.farmerWallet || msg.sender == c.basic.buyerWallet,
+            "Only contract parties can call this function"
+        );
         _;
     }
 
@@ -285,6 +295,26 @@ contract AgriculturalContract {
 
         emit DisputeResolved(contractId, payFarmer);
         emit ContractStatusUpdated(contractId, ContractStatus.RESOLVED);
+    }
+
+    function cancelContract(uint256 contractId) public onlyContractParty(contractId) {
+        Contract storage c = contracts[contractId];
+        require(c.status.status == ContractStatus.PENDING, "Can only cancel pending contracts");
+        
+        // If buyer-initiated, refund the escrow balance to the buyer
+        if (c.status.isBuyerInitiated && c.status.escrowBalance > 0) {
+            uint256 refundAmount = c.status.escrowBalance;
+            c.status.escrowBalance = 0;
+            (bool sent, ) = c.basic.buyerWallet.call{value: refundAmount}("");
+            require(sent, "Failed to refund buyer");
+            emit FundsReleased(contractId, refundAmount);
+        }
+
+        // Mark the contract as CANCELLED
+        c.status.status = ContractStatus.CANCELLED;
+
+        emit ContractCancelled(contractId, msg.sender);
+        emit ContractStatusUpdated(contractId, ContractStatus.CANCELLED);
     }
 
     function withdrawPlatformFees() public onlyOwner {

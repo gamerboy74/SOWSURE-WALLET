@@ -765,13 +765,26 @@ export class WalletService {
     amount: string;
     startDate: string;
     endDate: string;
+    deliveryMethod: string;
+    deliveryLocation: string;
+    additionalNotes: string;
   }) {
     const walletInfo = await this.getWalletInfo();
     if (!walletInfo) throw new Error("No wallet found");
 
     const wallet = new Wallet(walletInfo.privateKey, this.provider);
     const contractWithSigner = this.sellContract.connect(wallet) as Contract & {
-      createBuyContract(cropName: string, quantity: bigint, amount: bigint, startDate: number, endDate: number): Promise<TransactionResponse>;
+      createBuyContract(
+        cropName: string,
+        quantity: bigint,
+        amount: bigint,
+        startDate: number,
+        endDate: number,
+        deliveryMethod: string,
+        deliveryLocation: string,
+        additionalNotes: string,
+        overrides?: { value: bigint }
+      ): Promise<TransactionResponse>;
     };
 
     const amountWei = parseEther(params.amount);
@@ -782,7 +795,11 @@ export class WalletService {
       BigInt(params.quantity),
       amountWei,
       Math.floor(new Date(params.startDate).getTime() / 1000),
-      Math.floor(new Date(params.endDate).getTime() / 1000)
+      Math.floor(new Date(params.endDate).getTime() / 1000),
+      params.deliveryMethod,
+      params.deliveryLocation,
+      params.additionalNotes,
+      { value: amountWei }
     );
 
     const { data: buyer } = await supabase
@@ -825,9 +842,9 @@ export class WalletService {
       p_amount_eth: parseFloat(params.amount),
       p_start_date: params.startDate,
       p_end_date: params.endDate,
-      p_delivery_method: "",
-      p_delivery_location: "",
-      p_additional_notes: "",
+      p_delivery_method: params.deliveryMethod,
+      p_delivery_location: params.deliveryLocation,
+      p_additional_notes: params.additionalNotes,
       p_tx_hash: tx.hash,
       p_contract_address: CONTRACT_ADDRESS,
     });
@@ -1109,6 +1126,71 @@ export class WalletService {
     return tx.hash;
   }
 
+  static async cancelContract(walletId: string, contractId: number): Promise<string> {
+    const walletInfo = await this.getWalletInfo();
+    if (!walletInfo) throw new Error("No wallet found");
+
+    const wallet = new Wallet(walletInfo.privateKey, this.provider);
+    const contractWithSigner = this.sellContract.connect(wallet) as Contract & {
+      cancelContract(contractId: number, overrides?: { gasLimit?: number }): Promise<TransactionResponse>;
+    };
+
+    // Check contract details to ensure it's cancellable
+    const contractDetails = await contractWithSigner.getContractDetails(contractId);
+    if (contractDetails.status.status !== "PENDING") {
+      throw new Error(`Contract ${contractId} is not in PENDING state and cannot be cancelled`);
+    }
+
+    // Execute the cancelContract transaction
+    const tx = await contractWithSigner.cancelContract(contractId, { gasLimit: 200000 });
+
+    // Wait for transaction confirmation
+    const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) throw new Error(`Transaction failed: ${tx.hash}`);
+
+    // Update the smart_contracts table in Supabase
+    const { error: updateError } = await supabase
+      .from("smart_contracts")
+      .update({
+        status: "CANCELLED",
+        blockchain_tx_hash: tx.hash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("contract_id", contractId);
+    if (updateError) {
+      console.error(`Error updating contract ${contractId} in DB: ${updateError.message}`);
+      throw new Error(`Failed to update contract status: ${updateError.message}`);
+    }
+
+    // If buyer-initiated, record the refund transaction
+    if (contractDetails.status.isBuyerInitiated && contractDetails.status.escrowBalance > 0n) {
+      const refundAmount = formatEther(contractDetails.status.escrowBalance);
+      const newTx = await this.createTransaction(
+        walletId,
+        parseFloat(refundAmount),
+        "DEPOSIT",
+        {
+          txHash: tx.hash,
+          fromAddress: CONTRACT_ADDRESS,
+          toAddress: walletInfo.address,
+          network: "sepolia",
+          tokenType: "ETH",
+          note: `Refund for cancelled contract #${contractId}`,
+        }
+      );
+
+      await supabase
+        .from("wallet_transactions")
+        .update({ status: "COMPLETED" })
+        .eq("id", newTx.id);
+
+      this.eventEmitter.emit(`transaction:${walletId}`, { ...newTx, status: "COMPLETED" });
+    }
+
+    console.log(`Contract ${contractId} cancelled successfully. Tx Hash: ${tx.hash}`);
+    return tx.hash;
+  }
+
   static async getContractDetails(contractId: number) {
     const contract = this.sellContract as Contract & {
       getContractDetails(contractId: number): Promise<{
@@ -1133,7 +1215,7 @@ export class WalletService {
           additionalNotes: string;
         };
         status: {
-          status: "PENDING" | "FUNDED" | "IN_PROGRESS" | "COMPLETED" | "DISPUTED" | "RESOLVED";
+          status: "PENDING" | "FUNDED" | "IN_PROGRESS" | "COMPLETED" | "DISPUTED" | "RESOLVED" | "CANCELLED";
           escrowBalance: bigint;
           farmerConfirmedDelivery: boolean;
           buyerConfirmedReceipt: boolean;

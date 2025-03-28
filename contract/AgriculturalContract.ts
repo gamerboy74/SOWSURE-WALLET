@@ -1,6 +1,6 @@
 // Replace with your actual deployed contract address on Sepolia
 export const CONTRACT_ADDRESS: string =
-  "0x61E139A50735bDEa916147535f2e13Acb9b619f0";
+  "0x08B88e25186558573fa5E3EaaD456Ed99874E1FF";
 
 // Define the ABI with TypeScript type safety
 export const CONTRACT_ABI: any[] = [
@@ -8,6 +8,25 @@ export const CONTRACT_ABI: any[] = [
 		"inputs": [],
 		"stateMutability": "nonpayable",
 		"type": "constructor"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "contractId",
+				"type": "uint256"
+			},
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "by",
+				"type": "address"
+			}
+		],
+		"name": "ContractCancelled",
+		"type": "event"
 	},
 	{
 		"anonymous": false,
@@ -218,6 +237,19 @@ export const CONTRACT_ABI: any[] = [
 		"name": "acceptSellContract",
 		"outputs": [],
 		"stateMutability": "payable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "contractId",
+				"type": "uint256"
+			}
+		],
+		"name": "cancelContract",
+		"outputs": [],
+		"stateMutability": "nonpayable",
 		"type": "function"
 	},
 	{

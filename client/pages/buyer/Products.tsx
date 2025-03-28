@@ -611,17 +611,13 @@ function Products() {
     }));
   };
 
-  const handleDelete = (product: Product) => {
-    setState((prev) => ({ ...prev, showDeleteDialog: true, productToDelete: product }));
-  };
-
   const confirmDelete = async () => {
     if (!state.productToDelete) return;
     const id = state.productToDelete.id;
+  
     try {
       setState((prev) => ({ ...prev, deleting: id, error: null, showDeleteDialog: false }));
   
-      // Fetch product details including contract_id
       const { data: product, error: fetchError } = await supabase
         .from("products")
         .select("image_url, contract_id")
@@ -629,9 +625,7 @@ function Products() {
         .single();
       if (fetchError) throw new Error(`Fetch product error: ${fetchError.message}`);
   
-      // Start a transaction to ensure atomicity
       const deleteRelatedData = async () => {
-        // 1. Delete related image from storage if it exists
         if (product?.image_url) {
           const filePath = product.image_url.split("/product-images/")[1];
           if (filePath) {
@@ -642,76 +636,57 @@ function Products() {
           }
         }
   
-        // 2. Handle related smart_contracts (set to CANCELLED instead of deleting due to blockchain)
         if (product?.contract_id) {
-          const { error: contractError } = await supabase
-            .from("smart_contracts")
-            .update({ status: "CANCELLED", updated_at: new Date().toISOString() })
-            .eq("contract_id", product.contract_id);
-          if (contractError) throw new Error(`Contract update error: ${contractError.message}`);
-  
-          // 3. Delete related wallet_transactions
-          const { error: walletError } = await supabase
-            .from("wallet_transactions")
-            .delete()
-            .eq("contract_id", product.contract_id);
-          if (walletError) throw new Error(`Wallet transactions delete error: ${walletError.message}`);
-  
-          // 4. Delete related notifications
-          const { error: notificationError } = await supabase
-            .from("notifications")
-            .delete()
-            .eq("contract_id", product.contract_id);
-          if (notificationError) throw new Error(`Notifications delete error: ${notificationError.message}`);
-  
-          // 5. Delete related contract_events
-          const { error: eventsError } = await supabase
-            .from("contract_events")
-            .delete()
-            .eq("contract_id", product.contract_id);
-          if (eventsError) throw new Error(`Contract events delete error: ${eventsError.message}`);
-  
-          // 6. Delete related platform_fees
-          const { error: feesError } = await supabase
-            .from("platform_fees")
-            .delete()
-            .eq("contract_id", product.contract_id);
-          if (feesError) throw new Error(`Platform fees delete error: ${feesError.message}`);
-  
-          // 7. Delete related disputes
-          const { error: disputesError } = await supabase
-            .from("disputes")
-            .delete()
-            .eq("contract_id", product.contract_id);
-          if (disputesError) throw new Error(`Disputes delete error: ${disputesError.message}`);
-  
-          // 8. Fetch and delete related chats and messages
-          const { data: chats, error: chatsError } = await supabase
-            .from("chats")
+          const { data: wallet } = await supabase
+            .from("wallets")
             .select("id")
-            .eq("product_id", id);
-          if (chatsError) throw new Error(`Chats fetch error: ${chatsError.message}`);
+            .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+            .single();
+          if (!wallet) throw new Error("Wallet not found");
   
-          if (chats && chats.length > 0) {
-            const chatIds = chats.map((chat) => chat.id);
+          // Cancel the contract on-chain
+          const txHash = await WalletService.cancelContract(wallet.id, product.contract_id);
+          console.log(`Contract ${product.contract_id} cancelled with txHash: ${txHash}`);
   
-            // Delete messages related to these chats (ON DELETE CASCADE should handle this, but explicit deletion for clarity)
-            const { error: messagesError } = await supabase
-              .from("messages")
+          // Related data cleanup is handled by WalletService.cancelContract for the smart_contracts table
+          const tablesToClean = [
+            "wallet_transactions",
+            "notifications",
+            "contract_events",
+            "platform_fees",
+            "disputes",
+          ];
+  
+          for (const table of tablesToClean) {
+            const { error } = await supabase
+              .from(table)
               .delete()
-              .in("chat_id", chatIds);
-            if (messagesError) throw new Error(`Messages delete error: ${messagesError.message}`);
-  
-            // Delete chats
-            const { error: chatsDeleteError } = await supabase
-              .from("chats")
-              .delete()
-              .in("id", chatIds);
-            if (chatsDeleteError) throw new Error(`Chats delete error: ${chatsDeleteError.message}`);
+              .eq("contract_id", product.contract_id);
+            if (error) throw new Error(`${table} delete error: ${error.message}`);
           }
         }
   
-        // 9. Finally, delete the product itself
+        const { data: chats, error: chatsError } = await supabase
+          .from("chats")
+          .select("id")
+          .eq("product_id", id);
+        if (chatsError) throw new Error(`Chats fetch error: ${chatsError.message}`);
+  
+        if (chats && chats.length > 0) {
+          const chatIds = chats.map((chat) => chat.id);
+          const { error: messagesError } = await supabase
+            .from("messages")
+            .delete()
+            .in("chat_id", chatIds);
+          if (messagesError) throw new Error(`Messages delete error: ${messagesError.message}`);
+  
+          const { error: chatsDeleteError } = await supabase
+            .from("chats")
+            .delete()
+            .in("id", chatIds);
+          if (chatsDeleteError) throw new Error(`Chats delete error: ${chatsDeleteError.message}`);
+        }
+  
         const { error: deleteError } = await supabase
           .from("products")
           .delete()
@@ -719,10 +694,7 @@ function Products() {
         if (deleteError) throw new Error(`Product delete error: ${deleteError.message}`);
       };
   
-      // Execute the deletion logic
       await deleteRelatedData();
-  
-      // Reload products to reflect changes
       await loadProducts();
       setState((prev) => ({ ...prev, deleting: null, productToDelete: null }));
       notification.success("Product and related data deleted successfully!");
@@ -738,9 +710,12 @@ function Products() {
       notification.error("Failed to delete product and related data");
     }
   };
-
   const cancelDelete = () => {
     setState((prev) => ({ ...prev, showDeleteDialog: false, productToDelete: null }));
+  };
+
+  const handleDelete = (product: Product) => {
+    setState((prev) => ({ ...prev, productToDelete: product, showDeleteDialog: true }));
   };
 
   const debouncedSetSearchQuery = useCallback(

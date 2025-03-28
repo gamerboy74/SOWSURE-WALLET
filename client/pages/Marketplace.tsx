@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import ListingCard from "../components/marketplace/ListingCard";
@@ -7,6 +7,9 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { debounce } from "lodash";
 import { Search, Filter, AlertCircle } from "lucide-react";
+import { ethers } from "ethers";
+import { CONTRACT_ADDRESS, CONTRACT_ABI } from "../../contract/AgriculturalContract";
+import { WalletService } from "../services/wallet.service";
 
 interface MarketplaceProduct {
   id: string;
@@ -24,8 +27,17 @@ interface MarketplaceProduct {
   };
   postedDate: string;
   description: string;
-  category: string; // Added category field
+  category: string;
 }
+
+const STATUS_MAP: { [key: string]: string } = {
+  "0": "PENDING",
+  "1": "FUNDED",
+  "2": "IN_PROGRESS",
+  "3": "COMPLETED",
+  "4": "DISPUTED",
+  "5": "RESOLVED",
+};
 
 const customStyles = `
   .search-input, .filter-select {
@@ -35,7 +47,6 @@ const customStyles = `
     transform: translateY(-1px);
     box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   }
-
   .dropdown-constrain {
     width: 100%;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -46,7 +57,6 @@ const customStyles = `
     text-overflow: ellipsis;
     max-width: 100%;
   }
-
   @keyframes slideIn {
     from {
       opacity: 0;
@@ -57,7 +67,6 @@ const customStyles = `
       transform: translateY(0);
     }
   }
-
   .product-grid {
     display: grid;
     gap: 1.5rem;
@@ -89,6 +98,22 @@ function Marketplace() {
           .select(
             `
             *,
+            smart_contracts!products_contract_id_fkey!inner (
+              contract_id,
+              status,
+              amount_eth,
+              escrow_balance_eth,
+              farmer_confirmed_delivery,
+              buyer_confirmed_receipt,
+              is_buyer_initiated,
+              delivery_method,
+              delivery_location,
+              start_date,
+              end_date,
+              additional_notes,
+              buyer_id,
+              farmer_id
+            ),
             farmers:farmer_id!left (
               id,
               name,
@@ -101,13 +126,15 @@ function Marketplace() {
             )
           `
           )
-          .eq("status", "active")
-          .order("created_at", { ascending: false });
+          .eq("smart_contracts.status", "PENDING"); // Filter for PENDING contracts
 
+        const provider = WalletService.provider || new ethers.JsonRpcProvider("http://localhost:8545");
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+
+        // Apply additional filters
         if (selectedCategory !== "all") {
           query = query.eq("category", selectedCategory);
         }
-
         if (searchQuery) {
           query = query.ilike("name", `%${searchQuery}%`);
         }
@@ -125,7 +152,41 @@ function Marketplace() {
           return;
         }
 
-        const formattedProducts = data.filter(Boolean).map((product) => ({
+        // Sync with blockchain status
+        const syncedProducts = await Promise.all(
+          data.map(async (product) => {
+            if (product.smart_contracts && product.smart_contracts.contract_id) {
+              try {
+                const details = await contract.getContractDetails(product.smart_contracts.contract_id);
+                const onChainStatus = STATUS_MAP[details.status.status.toString()] || product.smart_contracts.status;
+
+                if (product.smart_contracts.status !== onChainStatus) {
+                  await supabase
+                    .from("smart_contracts")
+                    .update({ status: onChainStatus })
+                    .eq("contract_id", product.smart_contracts.contract_id);
+                  product.smart_contracts.status = onChainStatus;
+                }
+              } catch (err) {
+                console.error(`Error syncing contract ${product.smart_contracts.contract_id}:`, err);
+              }
+            }
+            return product;
+          })
+        );
+
+        // Filter for PENDING status (after sync)
+        const pendingProducts = syncedProducts.filter(
+          (product) => product.smart_contracts && product.smart_contracts.status === "PENDING"
+        );
+
+        if (pendingProducts.length === 0) {
+          setProducts(isFirstLoad ? [] : products);
+          setHasMore(false);
+          return;
+        }
+
+        const formattedProducts = pendingProducts.map((product) => ({
           id: product.id,
           type: product.type,
           title: product.name,
@@ -147,16 +208,16 @@ function Marketplace() {
           },
           postedDate: product.created_at,
           description: product.description || "",
-          category: product.category || "Not specified", // Added category mapping
+          category: product.category || "Not specified",
         }));
 
         setProducts(
           isFirstLoad ? formattedProducts : [...products, ...formattedProducts]
         );
-        setHasMore(data.length === limit);
+        setHasMore(formattedProducts.length === limit);
       } catch (err) {
-        console.error("Error:", err);
-        setError("Failed to load marketplace");
+        console.error("Full Error:", JSON.stringify(err, null, 2));
+        setError("Failed to load marketplace products");
       } finally {
         setLoading(false);
         isFetchingRef.current = false;
@@ -174,7 +235,7 @@ function Marketplace() {
         {
           event: "*",
           schema: "public",
-          table: "products",
+          table: "smart_contracts",
         },
         () => {
           setPage(1);
@@ -225,7 +286,6 @@ function Marketplace() {
 
   const handleNewListing = () => {
     console.log("Create new listing");
-    // Navigate to the create listing page if needed
     // navigate("/create-listing");
   };
 
@@ -310,7 +370,7 @@ function Marketplace() {
         <div className="product-grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {products.length === 0 && !loading ? (
             <div className="text-center py-12 col-span-full">
-              <p className="text-gray-500">No products found</p>
+              <p className="text-gray-500">No pending contract products found</p>
             </div>
           ) : (
             products.map((product) => (
