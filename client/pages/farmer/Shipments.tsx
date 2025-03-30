@@ -186,7 +186,7 @@ const Shipments: React.FC = () => {
   // Fetch FUNDED contracts for dropdown (farmers only)
   useEffect(() => {
     if (!userRole || !userId || userRole !== 'farmer') return;
-
+  
     const fetchFundedContracts = async () => {
       try {
         const { data: productsData, error: productsError } = await supabase
@@ -195,34 +195,37 @@ const Shipments: React.FC = () => {
             id,
             name,
             unit,
-            image_url,
             quantity,
             contract_id,
-            smart_contracts!contract_id (
+            smart_contracts!products_contract_id_fkey (
               contract_id,
               status,
-              quantity,
               delivery_method,
               delivery_location,
               additional_notes
             )
           `)
           .eq('farmer_id', userId)
+          .eq('smart_contracts.status', 'FUNDED') // Filter directly in the query
           .not('contract_id', 'is', null);
-
+  
         if (productsError) throw productsError;
-
-        const fundedContractsData = productsData.filter(
-          (product) => product.smart_contracts?.[0]?.status === 'FUNDED'
-        );
-
+  
+        console.log('Fetched products with funded contracts:', productsData); // Debug log
+  
+        // Ensure smart_contracts is a single object, not an array
+        const fundedContractsData = productsData.map((product) => ({
+          ...product,
+          smart_contracts: product.smart_contracts || {}, // Fallback if no contract data
+        }));
+  
         setFundedContracts(fundedContractsData);
       } catch (err) {
         console.error('Error fetching funded contracts:', err);
         setError('Failed to load funded contracts.');
       }
     };
-
+  
     fetchFundedContracts();
   }, [userRole, userId]);
 

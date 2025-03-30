@@ -1772,3 +1772,115 @@ USING (
     AND EXISTS (SELECT 1 FROM buyers WHERE user_id = auth.uid())
   )
 );
+
+
+DROP FUNCTION IF EXISTS sync_farmer_acceptance;
+
+CREATE OR REPLACE FUNCTION sync_farmer_acceptance(
+  p_contract_id BIGINT,
+  p_farmer_id UUID,
+  p_tx_hash TEXT
+) RETURNS VOID AS $$
+DECLARE
+  v_advance_amount_eth DECIMAL(20,8);
+  v_rows_updated INT;
+BEGIN
+  -- Fetch advance amount
+  SELECT advance_amount_eth INTO v_advance_amount_eth
+  FROM smart_contracts
+  WHERE contract_id = p_contract_id;
+
+  IF v_advance_amount_eth IS NULL THEN
+    RAISE EXCEPTION 'Contract % not found or advance_amount_eth is NULL', p_contract_id;
+  END IF;
+
+  -- Update smart_contracts
+  UPDATE smart_contracts
+  SET farmer_id = p_farmer_id,
+      status = 'FUNDED',
+      escrow_balance_eth = escrow_balance_eth - v_advance_amount_eth,
+      blockchain_tx_hash = p_tx_hash,
+      updated_at = NOW()
+  WHERE contract_id = p_contract_id
+  AND status = 'PENDING'
+  AND is_buyer_initiated = true
+  AND farmer_id IS NULL;
+
+  -- Check if the update succeeded
+  GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+  IF v_rows_updated = 0 THEN
+    RAISE EXCEPTION 'Failed to update smart_contracts for contract_id %, possibly due to RLS or invalid state', p_contract_id;
+  END IF;
+
+  -- Insert into wallet_transactions
+  INSERT INTO wallet_transactions (
+    wallet_id, contract_id, amount, type, status, token_type, metadata, created_at
+  )
+  SELECT 
+    w.id, p_contract_id, v_advance_amount_eth, 'TRANSFER', 'COMPLETED', 'ETH',
+    jsonb_build_object('note', 'Advance payment for contract acceptance', 'tx_hash', p_tx_hash), NOW()
+  FROM wallets w
+  JOIN farmers f ON f.user_id = w.user_id
+  WHERE f.id = p_farmer_id;
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE NOTICE 'Error in sync_farmer_acceptance for contract_id %: %', p_contract_id, SQLERRM;
+    RAISE EXCEPTION 'Sync failed: %', SQLERRM;
+END;
+$$ LANGUAGE plpgsql;
+
+GRANT EXECUTE ON FUNCTION sync_farmer_acceptance TO authenticated;
+
+DROP POLICY IF EXISTS "Users can update own contracts" ON smart_contracts;
+
+CREATE POLICY "Users can update own contracts" ON smart_contracts
+FOR UPDATE
+TO authenticated
+USING (
+  -- Allow updates if the user is the farmer and farmer_id is already set
+  (farmer_id IS NOT NULL AND farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid()))
+  OR
+  -- Allow updates if the user is the buyer and buyer_id is already set
+  (buyer_id IS NOT NULL AND buyer_id = (SELECT id FROM buyers WHERE user_id = auth.uid()))
+  OR
+  -- Allow a farmer to accept a buy contract (farmer_id is NULL, status is PENDING, is_buyer_initiated is true)
+  (
+    farmer_id IS NULL
+    AND status = 'PENDING'
+    AND is_buyer_initiated = true
+    AND EXISTS (SELECT 1 FROM farmers WHERE user_id = auth.uid())
+  )
+  OR
+  -- Allow a buyer to accept a sell contract (buyer_id is NULL, status is PENDING, is_buyer_initiated is false)
+  (
+    buyer_id IS NULL
+    AND status = 'PENDING'
+    AND is_buyer_initiated = false
+    AND EXISTS (SELECT 1 FROM buyers WHERE user_id = auth.uid())
+  )
+);
+
+-- For products
+CREATE POLICY "Farmers can view their products" ON products
+FOR SELECT
+TO authenticated
+USING (farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid()));
+
+-- For smart_contracts
+CREATE POLICY "Farmers can view their contracts" ON smart_contracts
+FOR SELECT
+TO authenticated
+USING (farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid()));
+
+CREATE POLICY "Farmers can view their products or accepted contracts" ON products
+FOR SELECT
+TO authenticated
+USING (
+  farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid())
+  OR EXISTS (
+    SELECT 1
+    FROM smart_contracts
+    WHERE smart_contracts.contract_id = products.contract_id
+    AND smart_contracts.farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid())
+  )
+);

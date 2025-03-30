@@ -10,17 +10,21 @@ interface OrderCardProps {
   location: string;
   user: {
     name: string;
-    type: string;
+    type: 'Farmer' | 'Buyer';
     rating: number;
+    profilePhotoUrl: string | null;
+    id: string;
   };
   orderDate: string;
   deliveryDate: string;
+  onViewDetails: () => void;
+  onContact: () => void;
 }
 
 const statusColors = {
   pending: 'bg-yellow-50 text-yellow-700',
   processing: 'bg-blue-50 text-blue-700',
-  completed: 'bg-green-50 text-green-700'
+  completed: 'bg-green-50 text-green-700',
 };
 
 function OrderCard({
@@ -32,7 +36,9 @@ function OrderCard({
   location,
   user,
   orderDate,
-  deliveryDate
+  deliveryDate,
+  onViewDetails,
+  onContact,
 }: OrderCardProps) {
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
@@ -72,22 +78,38 @@ function OrderCard({
 
         <div className="flex items-center justify-between pt-4 border-t">
           <div className="flex items-center">
-            <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center">
-              <User className="h-5 w-5 text-gray-600" />
-            </div>
-            <div className="ml-2">
+            {user.profilePhotoUrl ? (
+              <img
+                src={user.profilePhotoUrl}
+                alt={user.name}
+                className="h-8 w-8 rounded-full mr-2 object-cover"
+              />
+            ) : (
+              <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center mr-2">
+                <User className="h-5 w-5 text-gray-600" />
+              </div>
+            )}
+            <div>
               <p className="text-sm font-medium text-gray-900">{user.name}</p>
               <p className="text-xs text-gray-500">{user.type} • ⭐ {user.rating}</p>
             </div>
           </div>
-          <div className="space-x-2">
-            <button className="px-4 py-2 text-sm text-emerald-600 hover:bg-emerald-50 rounded-md">
-              View Details
-            </button>
-            <button className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
-              Contact {user.type}
-            </button>
-          </div>
+          {status !== 'pending' && (
+            <div className="space-x-2">
+              <button
+                onClick={onViewDetails}
+                className="px-4 py-2 text-sm text-emerald-600 hover:bg-emerald-50 rounded-md"
+              >
+                View Details
+              </button>
+              <button
+                onClick={onContact}
+                className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700"
+              >
+                Contact {user.type}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

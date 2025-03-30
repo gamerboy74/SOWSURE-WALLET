@@ -31,6 +31,7 @@ export const farmerRoutes: Route[] = [
   { path: "/farmer/dashboard", element: lazy(() => import("../client/farmer/FarmerDashboard")), key: "farmer-dashboard" },
   { path: "/farmer/products", element: lazy(() => import("../client/pages/farmer/Products")), key: "farmer-products" },
   { path: "/farmer/orders", element: lazy(() => import("../client/pages/Orders")), key: "farmer-orders" },
+  { path: "/farmer/orders/:orderId", element: lazy(() => import("../client/components/orders/OrderDetails")), key: "farmer-order-details" },
   { path: "/farmer/shipments", element: lazy(() => import("../client/pages/farmer/Shipments")), key: "farmer-shipments" },
   { path: "/farmer/analytics", element: lazy(() => import("../client/pages/farmer/FarmerAnalytics")), key: "farmer-analytics" },
 ];
@@ -40,6 +41,7 @@ export const buyerRoutes: Route[] = [
   { path: "/buyer/dashboard", element: lazy(() => import("../client/buyer/BuyerDashboard")), key: "buyer-dashboard" },
   { path: "/buyer/products", element: lazy(() => import("../client/pages/buyer/Products")), key: "buyer-products" },
   { path: "/buyer/orders", element: lazy(() => import("../client/pages/Orders")), key: "buyer-orders" },
+  { path: "/buyer/orders/:orderId", element: lazy(() => import("../client/components/orders/OrderDetails")), key: "buyer-order-details" },
   { path: "/buyer/contracts", element: createPlaceholder("Contracts"), key: "buyer-contracts" },
   { path: "/buyer/farmers", element: createPlaceholder("Farmers"), key: "buyer-farmers" },
   { path: "/buyer/wallet", element: lazy(() => import("../client/pages/wallet/WalletDashboard")), key: "wallet" },
