@@ -4,10 +4,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from '../../../contract/AgriculturalContract';
 import { WalletService } from '../../services/wallet.service';
-import { Loader2, Package, User, MapPin, Calendar, Truck, DollarSign, AlertCircle, CheckCircle, Gavel, ArrowLeft } from 'lucide-react';
+import { Loader2, Package, Scale, MapPin, Calendar, Truck, DollarSign, AlertCircle, CheckCircle, Gavel, ArrowLeft, Activity, CreditCard, Vault, Clock } from 'lucide-react';
 import { toast } from 'react-toastify';
 
-// Interfaces
 interface User {
   name: string;
   type: 'Farmer' | 'Buyer';
@@ -37,14 +36,15 @@ interface Order {
   confirmation_deadline: string | null;
   blockchain_tx_hash: string | null;
   additional_notes?: string | null;
+  image_url?: string | null;
 }
 
-// Define the exact shape of the Supabase response
 interface ProductData {
   id: number;
   name: string | null;
   quantity: number | null;
   unit: string | null;
+  image_url: string | null;
   contract_id: string | null;
   farmer_id: string | null;
   buyer_id: string | null;
@@ -87,7 +87,11 @@ const OrderDetails: React.FC = () => {
   const [userId, setUserId] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // Fetch user role and ID
+  // Reset scroll position to top when component mounts
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []); // Empty dependency array ensures this runs only on mount
+
   useEffect(() => {
     let mounted = true;
 
@@ -135,7 +139,6 @@ const OrderDetails: React.FC = () => {
     return () => { mounted = false; };
   }, []);
 
-  // Fetch order details
   const fetchOrderDetails = useCallback(async () => {
     if (!userRole || !userId || !orderId) return;
 
@@ -151,6 +154,7 @@ const OrderDetails: React.FC = () => {
           name,
           quantity,
           unit,
+          image_url,
           contract_id,
           farmer_id,
           buyer_id,
@@ -190,7 +194,6 @@ const OrderDetails: React.FC = () => {
 
       const contract = productData.smart_contracts;
 
-      // Fetch and sync blockchain status
       const contractDetails = await blockchainContract.getContractDetails(contract.contract_id);
       const onChainStatus = contractDetails.status.status.toString();
       const statusMap: { [key: string]: string } = {
@@ -205,18 +208,6 @@ const OrderDetails: React.FC = () => {
       };
       const mappedStatus = statusMap[onChainStatus] || contract.status;
 
-      // Log for debugging
-      console.log(`Contract ID ${contract.contract_id}:`, {
-        onChainStatus,
-        mappedStatus,
-        databaseStatus: contract.status,
-        farmerConfirmed: contract.farmer_confirmed_delivery,
-        buyerConfirmed: contract.buyer_confirmed_receipt,
-        farmerData: productData.farmers,
-        buyerData: productData.buyers,
-      });
-
-      // Sync database with blockchain
       if (contract.status !== mappedStatus || 
           (mappedStatus === 'IN_PROGRESS' && !contract.farmer_confirmed_delivery) || 
           (mappedStatus === 'COMPLETED' && !contract.buyer_confirmed_receipt)) {
@@ -231,7 +222,6 @@ const OrderDetails: React.FC = () => {
         if (updateError) throw updateError;
       }
 
-      // Fetch farmer or buyer details if missing
       let user: User;
       if (userRole === 'farmer') {
         if (!productData.buyers?.company_name || !productData.buyers?.id) {
@@ -257,7 +247,7 @@ const OrderDetails: React.FC = () => {
             id: productData.buyers.id || contract.buyer_id || '',
           };
         }
-      } else { // userRole === 'buyer'
+      } else {
         if (!productData.farmers?.name || !productData.farmers?.id) {
           const { data: farmer, error: farmerError } = await supabase
             .from('farmers')
@@ -304,6 +294,7 @@ const OrderDetails: React.FC = () => {
         confirmation_deadline: contract.confirmation_deadline,
         blockchain_tx_hash: contract.blockchain_tx_hash,
         additional_notes: contract.additional_notes,
+        image_url: productData.image_url,
       };
 
       setOrder(formattedOrder);
@@ -315,7 +306,6 @@ const OrderDetails: React.FC = () => {
     }
   }, [orderId, userRole, userId]);
 
-  // Setup real-time subscription and fetch initial data
   useEffect(() => {
     if (!userRole || !userId || !orderId) return;
 
@@ -504,15 +494,21 @@ const OrderDetails: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-teal-100">
-        <Loader2 className="h-12 w-12 animate-spin text-emerald-600" />
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <div className="relative">
+            <Loader2 className="h-16 w-16 animate-spin text-emerald-600" />
+            <div className="absolute inset-0 bg-gradient-to-tr from-emerald-500/20 to-transparent blur-xl"></div>
+          </div>
+          <p className="text-emerald-600 font-medium text-lg">Loading order details...</p>
+        </div>
       </div>
     );
   }
 
   if (error || !order) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-teal-100">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50">
         <div className="bg-red-50 text-red-600 p-6 rounded-lg shadow-lg flex items-center">
           <AlertCircle className="h-6 w-6 mr-2" />
           <p>{error || 'Order not found'}</p>
@@ -522,109 +518,157 @@ const OrderDetails: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-teal-100 p-6">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-[conic-gradient(at_top_right,_var(--tw-gradient-stops))] from-emerald-100 via-white to-teal-50 p-6">
+      <div className="max-w-5xl mx-auto space-y-8">
         <button
           onClick={() => navigate(`/${userRole}/orders`)}
-          className="mb-6 flex items-center text-emerald-600 hover:text-emerald-800 transition-colors"
+          className="group flex items-center gap-2 text-emerald-600 hover:text-emerald-800 bg-white/60 backdrop-blur-xl 
+          px-6 py-3 rounded-2xl hover:bg-white/80 border border-emerald-100/50 shadow-lg hover:shadow-xl
+          transition-all duration-300 transform hover:-translate-y-0.5"
           disabled={actionLoading}
         >
-          <ArrowLeft className="h-5 w-5 mr-2" /> Back to Orders
+          <ArrowLeft className="h-5 w-5 transition-transform group-hover:-translate-x-1" />
+          <span className="font-medium">Back to Orders</span>
         </button>
 
-        <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-emerald-200">
-          <div className="bg-emerald-600 text-white p-6">
-            <h1 className="text-2xl font-bold">{order.product}</h1>
-            <p className="text-sm">Contract #{order.contract_id}</p>
-            <span
-              className={`inline-block mt-2 px-3 py-1 rounded-full text-sm font-semibold ${
-                order.status === 'PENDING'
-                  ? 'bg-yellow-100 text-yellow-700'
-                  : order.status === 'FUNDED' || order.status === 'IN_PROGRESS' || order.status === 'DELIVERED'
-                  ? 'bg-blue-100 text-blue-700'
-                  : order.status === 'COMPLETED' || order.status === 'RESOLVED'
-                  ? 'bg-green-100 text-green-700'
-                  : order.status === 'DISPUTED' || order.status === 'CANCELLED'
-                  ? 'bg-red-100 text-red-700'
-                  : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              {order.status}
-            </span>
-          </div>
-
-          <div className="p-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="flex items-center text-gray-600">
-                <Package className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Quantity: {order.quantity}</span>
-              </div>
-              <div className="flex items-center text-gray-600">
-                <DollarSign className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Total: {order.price}</span>
-              </div>
-              <div className="flex items-center text-gray-600">
-                <DollarSign className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Advance: {order.advance_amount_eth} ETH</span>
-              </div>
-              <div className="flex items-center text-gray-600">
-                <DollarSign className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Escrow: {order.escrow_balance_eth} ETH</span>
-              </div>
-              <div className="flex items-center text-gray-600">
-                <MapPin className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Location: {order.location}</span>
-              </div>
-              <div className="flex items-center text-gray-600">
-                <Calendar className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Order Date: {new Date(order.orderDate).toLocaleDateString()}</span>
-              </div>
-              <div className="flex items-center text-gray-600">
-                <Truck className="h-5 w-5 mr-2 text-emerald-500" />
-                <span>Delivery Date: {new Date(order.deliveryDate).toLocaleDateString()}</span>
-              </div>
-              {order.confirmation_deadline && (
-                <div className="flex items-center text-gray-600">
-                  <Calendar className="h-5 w-5 mr-2 text-red-500" />
-                  <span>Deadline: {new Date(order.confirmation_deadline).toLocaleDateString()}</span>
-                </div>
+        <div className="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-emerald-100">
+          <div className="relative h-96">
+            <div className="absolute inset-0">
+              {order.image_url ? (
+                <img
+                  src={order.image_url}
+                  alt={order.product}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.src = "https://placehold.co/800x400?text=No+Image";
+                  }}
+                />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-r from-emerald-600 to-teal-600" />
               )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
             </div>
 
-            <div className="border-t pt-4">
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">{order.user.type} Information</h2>
-              <div className="flex items-center">
-                {order.user.profilePhotoUrl ? (
-                  <img
-                    src={order.user.profilePhotoUrl}
-                    alt={order.user.name}
-                    className="h-12 w-12 rounded-full mr-4 object-cover border-2 border-emerald-300"
-                    onError={(e) => (e.currentTarget.src = 'https://placehold.co/100x100?text=No+Image')}
-                  />
-                ) : (
-                  <img
-                    src="https://placehold.co/100x100?text=No+Image"
-                    alt="Placeholder"
-                    className="h-12 w-12 rounded-full mr-4 object-cover border-2 border-emerald-300"
-                  />
-                )}
+            <div className="relative h-full flex items-end p-8 text-white">
+              <div className="w-full flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-300 font-medium">
+                    <Package className="h-5 w-5" />
+                    <span>Contract #{order.contract_id}</span>
+                  </div>
+                  <h1 className="text-4xl md:text-5xl font-bold tracking-tight [text-shadow:_0_1px_2px_rgb(0_0_0_/_20%)]">
+                    {order.product}
+                  </h1>
+                  <div className="flex items-center gap-4 text-emerald-100">
+                    <span className="flex items-center gap-2">
+                      <Scale className="h-4 w-4" />
+                      {order.quantity}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      {order.location}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-end gap-3">
+                  <span className={`
+                    px-6 py-2 rounded-2xl text-sm font-medium shadow-lg backdrop-blur-md
+                    transform hover:scale-105 transition-transform duration-300
+                    ${getStatusStyles(order.status)}
+                  `}>
+                    {order.status}
+                  </span>
+                  {order.confirmation_deadline && (
+                    <p className="text-sm bg-black/30 backdrop-blur-md px-4 py-2 rounded-xl 
+                      flex items-center gap-2 border border-white/10">
+                      <Clock className="h-4 w-4" />
+                      Deadline: {new Date(order.confirmation_deadline).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-emerald-50/50 border-y border-emerald-100">
+            <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-emerald-100">
+              <QuickStat
+                label="Price"
+                value={order.price}
+                icon={<DollarSign className="h-5 w-5 text-emerald-600" />}
+              />
+              <QuickStat
+                label="Order Date"
+                value={new Date(order.orderDate).toLocaleDateString()}
+                icon={<Calendar className="h-5 w-5 text-emerald-600" />}
+              />
+              <QuickStat
+                label="Delivery Date"
+                value={new Date(order.deliveryDate).toLocaleDateString()}
+                icon={<Truck className="h-5 w-5 text-emerald-600" />}
+              />
+              <QuickStat
+                label="Status"
+                value={order.status}
+                icon={<Activity className="h-5 w-5 text-emerald-600" />}
+              />
+            </div>
+          </div>
+
+          <div className="p-8 space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <FinanceCard
+                title="Total Amount"
+                value={order.price}
+                icon={<DollarSign className="h-6 w-6" />}
+                gradient="from-emerald-500 to-teal-500"
+              />
+              <FinanceCard
+                title="Advance Paid"
+                value={`${order.advance_amount_eth} ETH`}
+                icon={<CreditCard className="h-6 w-6" />}
+                gradient="from-blue-500 to-cyan-500"
+              />
+              <FinanceCard
+                title="Escrow Balance"
+                value={`${order.escrow_balance_eth} ETH`}
+                icon={<Vault className="h-6 w-6" />}
+                gradient="from-purple-500 to-indigo-500"
+              />
+            </div>
+
+            <div className="relative bg-gradient-to-b from-emerald-50 to-transparent p-6 rounded-2xl">
+              <h2 className="text-xl font-semibold mb-6">Order Timeline</h2>
+              <OrderTimeline order={order} />
+            </div>
+
+            <div className="bg-gradient-to-br from-emerald-50 to-transparent p-6 rounded-2xl">
+              <h2 className="text-xl font-semibold mb-4">{order.user.type} Information</h2>
+              <div className="flex items-center gap-4">
+                <img
+                  src={order.user.profilePhotoUrl || "https://placehold.co/100x100?text=No+Image"}
+                  alt={order.user.name}
+                  className="h-16 w-16 rounded-full object-cover border-2 border-emerald-300"
+                  onError={(e) => (e.currentTarget.src = "https://placehold.co/100x100?text=No+Image")}
+                />
                 <div>
-                  <p className="text-md font-medium text-gray-900">{order.user.name}</p>
+                  <p className="text-lg font-medium text-gray-900">{order.user.name}</p>
                   <p className="text-sm text-gray-500">{order.user.type} • ⭐ {order.user.rating}</p>
                 </div>
               </div>
             </div>
 
             {order.additional_notes && (
-              <div className="border-t pt-4">
-                <h2 className="text-lg font-semibold text-gray-900 mb-2">Additional Notes</h2>
+              <div className="bg-white/50 backdrop-blur-sm p-6 rounded-2xl border border-emerald-50">
+                <h2 className="text-xl font-semibold mb-4">Additional Notes</h2>
                 <p className="text-gray-600">{order.additional_notes}</p>
               </div>
             )}
 
             {order.blockchain_tx_hash && (
-              <div className="border-t pt-4">
-                <h2 className="text-lg font-semibold text-gray-900 mb-2">Blockchain Transaction</h2>
+              <div className="bg-white/50 backdrop-blur-sm p-6 rounded-2xl border border-emerald-50">
+                <h2 className="text-xl font-semibold mb-4">Blockchain Transaction</h2>
                 <p className="text-gray-600 break-all">
                   Transaction Hash:{' '}
                   <a
@@ -645,75 +689,195 @@ const OrderDetails: React.FC = () => {
                 <span>{error}</span>
               </div>
             )}
-          </div>
 
-          <div className="p-6 bg-gray-50 border-t flex flex-wrap gap-3">
-            {order.status === 'FUNDED' && userRole === 'farmer' && order.farmer_id === userId && (
-              <button
-                onClick={handleConfirmDelivery}
-                className="flex items-center px-4 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 transition-colors disabled:bg-orange-300"
-                disabled={actionLoading}
-              >
-                {actionLoading ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Truck className="h-4 w-4 mr-2" />
-                )}
-                Confirm Delivery
-              </button>
-            )}
-            {order.status === 'IN_PROGRESS' && userRole === 'buyer' && order.buyer_id === userId && (
-              <button
-                onClick={handleConfirmReceipt}
-                className="flex items-center px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition-colors disabled:bg-purple-300"
-                disabled={actionLoading}
-              >
-                {actionLoading ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                )}
-                Confirm Receipt
-              </button>
-            )}
-            {order.status === 'IN_PROGRESS' &&
-              userRole === 'farmer' &&
-              order.farmer_id === userId &&
-              order.confirmation_deadline &&
-              new Date(order.confirmation_deadline) < new Date() && (
+            <div className="flex flex-wrap gap-4 pt-6 border-t border-emerald-100">
+              {order.status === 'FUNDED' && userRole === 'farmer' && order.farmer_id === userId && (
                 <button
-                  onClick={handleClaimRemaining}
-                  className="flex items-center px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors disabled:bg-green-300"
+                  onClick={handleConfirmDelivery}
+                  className="flex items-center px-6 py-3 bg-orange-500 text-white rounded-2xl hover:bg-orange-600 
+                  transition-all duration-300 transform hover:-translate-y-0.5 disabled:bg-orange-300 shadow-lg"
                   disabled={actionLoading}
                 >
                   {actionLoading ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <CheckCircle className="h-4 w-4 mr-2" />
+                    <Truck className="h-5 w-5 mr-2" />
                   )}
-                  Claim Remaining
+                  Confirm Delivery
                 </button>
               )}
-            {['FUNDED', 'IN_PROGRESS'].includes(order.status) &&
-              ((userRole === 'farmer' && order.farmer_id === userId) || (userRole === 'buyer' && order.buyer_id === userId)) && (
+              {order.status === 'IN_PROGRESS' && userRole === 'buyer' && order.buyer_id === userId && (
                 <button
-                  onClick={handleRaiseDispute}
-                  className="flex items-center px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors disabled:bg-red-300"
+                  onClick={handleConfirmReceipt}
+                  className="flex items-center px-6 py-3 bg-purple-500 text-white rounded-2xl hover:bg-purple-600 
+                  transition-all duration-300 transform hover:-translate-y-0.5 disabled:bg-purple-300 shadow-lg"
                   disabled={actionLoading}
                 >
                   {actionLoading ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <Gavel className="h-4 w-4 mr-2" />
+                    <CheckCircle className="h-5 w-5 mr-2" />
                   )}
-                  Raise Dispute
+                  Confirm Receipt
                 </button>
               )}
+              {order.status === 'IN_PROGRESS' &&
+                userRole === 'farmer' &&
+                order.farmer_id === userId &&
+                order.confirmation_deadline &&
+                new Date(order.confirmation_deadline) < new Date() && (
+                  <button
+                    onClick={handleClaimRemaining}
+                    className="flex items-center px-6 py-3 bg-green-500 text-white rounded-2xl hover:bg-green-600 
+                    transition-all duration-300 transform hover:-translate-y-0.5 disabled:bg-green-300 shadow-lg"
+                    disabled={actionLoading}
+                  >
+                    {actionLoading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle className="h-5 w-5 mr-2" />
+                    )}
+                    Claim Remaining
+                  </button>
+                )}
+              {['FUNDED', 'IN_PROGRESS'].includes(order.status) &&
+                ((userRole === 'farmer' && order.farmer_id === userId) || (userRole === 'buyer' && order.buyer_id === userId)) && (
+                  <button
+                    onClick={handleRaiseDispute}
+                    className="flex items-center px-6 py-3 bg-red-500 text-white rounded-2xl hover:bg-red-600 
+                    transition-all duration-300 transform hover:-translate-y-0.5 disabled:bg-red-300 shadow-lg"
+                    disabled={actionLoading}
+                  >
+                    {actionLoading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Gavel className="h-5 w-5 mr-2" />
+                    )}
+                    Raise Dispute
+                  </button>
+                )}
+            </div>
           </div>
         </div>
+
+        <style>{`
+          @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+          }
+          .animate-float {
+            animation: float 3s ease-in-out infinite;
+          }
+        `}</style>
       </div>
     </div>
   );
+};
+
+const QuickStat = ({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) => (
+  <div className="p-4 flex items-center gap-3">
+    <div className="p-2 bg-emerald-100/50 rounded-lg">{icon}</div>
+    <div>
+      <p className="text-sm text-gray-500">{label}</p>
+      <p className="font-medium text-gray-900">{value}</p>
+    </div>
+  </div>
+);
+
+const FinanceCard = ({ title, value, icon, gradient }: any) => (
+  <div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
+    <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${gradient} text-white 
+      flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+      {icon}
+    </div>
+    <h3 className="text-sm text-gray-500">{title}</h3>
+    <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
+  </div>
+);
+
+const OrderTimeline = ({ order }: { order: Order }) => {
+  const statusOrder = [
+    { status: 'PENDING', title: 'Order Created', icon: <Package />, date: order.orderDate },
+    { status: 'FUNDED', title: 'Funded', icon: <DollarSign />, date: order.orderDate },
+    { status: 'IN_PROGRESS', title: 'In Progress', icon: <Truck />, date: order.deliveryDate },
+    { status: 'DELIVERED', title: 'Delivered', icon: <Truck />, date: order.deliveryDate },
+    { status: 'COMPLETED', title: 'Completed', icon: <CheckCircle />, date: order.deliveryDate },
+  ];
+
+  const statusSequence = ['PENDING', 'FUNDED', 'IN_PROGRESS', 'DELIVERED', 'COMPLETED'];
+  const currentIndex = statusSequence.indexOf(order.status);
+
+  const timelineItems = statusOrder.filter((item, index) => {
+    if (order.status === 'CANCELLED') {
+      return index <= statusSequence.indexOf('PENDING');
+    }
+    if (order.status === 'DISPUTED') {
+      return index <= statusSequence.indexOf('IN_PROGRESS');
+    }
+    return index <= currentIndex;
+  });
+
+  if (order.status === 'DISPUTED') {
+    timelineItems.push({
+      status: 'DISPUTED',
+      title: 'Dispute Raised',
+      icon: <Gavel />,
+      date: new Date().toISOString(),
+    });
+  } else if (order.status === 'CANCELLED') {
+    timelineItems.push({
+      status: 'CANCELLED',
+      title: 'Cancelled',
+      icon: <AlertCircle />,
+      date: new Date().toISOString(),
+    });
+  } else if (order.status === 'RESOLVED') {
+    timelineItems.push({
+      status: 'RESOLVED',
+      title: 'Resolved',
+      icon: <CheckCircle />,
+      date: new Date().toISOString(),
+    });
+  }
+
+  return (
+    <div className="relative pl-8 border-l-2 border-emerald-200 space-y-6">
+      {timelineItems.map((item, index) => (
+        <TimelineItem
+          key={item.status}
+          title={item.title}
+          date={item.date}
+          icon={item.icon}
+          isCompleted={index < timelineItems.length - 1 || (index === timelineItems.length - 1 && ['COMPLETED', 'RESOLVED', 'CANCELLED', 'DELIVERED'].includes(order.status))}
+        />
+      ))}
+    </div>
+  );
+};
+
+const TimelineItem = ({ title, date, icon, isCompleted }: any) => (
+  <div className="relative">
+    <div className={`absolute -left-11 p-2 rounded-full 
+      ${isCompleted ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
+      {icon}
+    </div>
+    <h4 className="font-medium text-gray-900">{title}</h4>
+    <p className="text-sm text-gray-500">{new Date(date).toLocaleDateString()}</p>
+  </div>
+);
+
+const getStatusStyles = (status: string) => {
+  const styles: Record<string, string> = {
+    PENDING: 'bg-gradient-to-r from-yellow-400 to-amber-500',
+    FUNDED: 'bg-gradient-to-r from-blue-400 to-cyan-500',
+    IN_PROGRESS: 'bg-gradient-to-r from-purple-400 to-indigo-500',
+    DELIVERED: 'bg-gradient-to-r from-green-400 to-emerald-500',
+    COMPLETED: 'bg-gradient-to-r from-teal-400 to-emerald-500',
+    DISPUTED: 'bg-gradient-to-r from-red-400 to-rose-500',
+    CANCELLED: 'bg-gradient-to-r from-gray-400 to-slate-500',
+    RESOLVED: 'bg-gradient-to-r from-teal-400 to-emerald-500',
+  };
+  return `${styles[status] || styles.PENDING} text-white`;
 };
 
 export default OrderDetails;

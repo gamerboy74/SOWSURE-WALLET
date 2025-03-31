@@ -114,6 +114,7 @@ interface ProductFormData {
   delivery_method: string;
   delivery_location: string;
   additional_notes: string;
+  end_date: string; // Only end_date is user-configurable
 }
 
 interface ProductsState {
@@ -151,6 +152,7 @@ const initialFormData: ProductFormData = {
   delivery_method: "pickup",
   delivery_location: "",
   additional_notes: "",
+  end_date: "",
 };
 
 const initialState: ProductsState = {
@@ -327,6 +329,12 @@ function Products() {
     if (!state.formData.location.trim()) errors.location = "Location is required";
     if (!state.formData.delivery_method.trim()) errors.delivery_method = "Delivery method is required";
     if (!state.formData.delivery_location.trim()) errors.delivery_location = "Delivery location is required";
+    if (!state.formData.end_date) errors.end_date = "End date is required";
+    if (state.formData.end_date) {
+      const end = new Date(state.formData.end_date);
+      const now = new Date();
+      if (end <= now) errors.end_date = "End date must be in the future";
+    }
     return errors;
   };
 
@@ -426,12 +434,13 @@ function Products() {
         if (error) throw new Error(`Insert error: ${error.message}`);
         productId = data.id;
 
+        const startDate = new Date().toISOString(); // Start date is contract creation date
         const { txHash, contractId } = await WalletService.createBuyContract(walletData.id, {
           cropName: state.formData.name,
           quantity: state.formData.quantity,
           amount: amountEth,
-          startDate: new Date().toISOString(),
-          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          startDate: startDate,
+          endDate: new Date(state.formData.end_date).toISOString(),
           deliveryMethod: state.formData.delivery_method,
           deliveryLocation: state.formData.delivery_location,
           additionalNotes: state.formData.additional_notes || "",
@@ -452,7 +461,7 @@ function Products() {
             user_id: farmer.user_id,
             contract_id: Number(contractId),
             title: "New Buy Request",
-            message: `A new buy request for ${state.formData.name} (Contract #${contractId}) is available.`,
+            message: `A new buy request for ${state.formData.name} (Contract #${contractId}) is available. Fulfill by ${new Date(state.formData.end_date).toLocaleDateString()}.`,
             type: "order",
             data: { contract_id: contractId, product_id: productId },
             created_at: new Date().toISOString(),
@@ -503,6 +512,7 @@ function Products() {
         delivery_method: "pickup",
         delivery_location: "",
         additional_notes: "",
+        end_date: "", // Not prefilled; could fetch from contract if needed
       },
       editingId: product.id,
       showForm: true,
@@ -883,6 +893,23 @@ function Products() {
                     required
                   />
                   {state.formErrors.delivery_location && <p className="error-message">{state.formErrors.delivery_location}</p>}
+                </div>
+                <div>
+                  <label htmlFor="end_date" className="block text-sm font-medium text-gray-700">
+                    Fulfillment Deadline (End Date)
+                  </label>
+                  <input
+                    type="date"
+                    id="end_date"
+                    name="end_date"
+                    value={state.formData.end_date}
+                    onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, end_date: e.target.value } }))}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
+                    min={new Date().toISOString().split("T")[0]} // Prevent past dates
+                    required
+                  />
+                  {state.formErrors.end_date && <p className="error-message">{state.formErrors.end_date}</p>}
+                  <p className="text-xs text-gray-500 mt-1">Start date will be set to today ({new Date().toLocaleDateString()}).</p>
                 </div>
                 <div>
                   <label htmlFor="additional_notes" className="block text-sm font-medium text-gray-700">

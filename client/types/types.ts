@@ -18,6 +18,12 @@ export interface Farmer {
   created_at: string;
   updated_at: string;
 }
+export interface PurchaseSummary {
+  totalPurchased: number; // Total amount in ETH for completed purchases
+  totalSold: number;     // Total amount in ETH for completed sales
+  pendingContracts: number;
+  pendingValue: number;  // Total ETH value of pending contracts
+}
 
 export interface Buyer {
   id: string;
@@ -133,4 +139,41 @@ export interface FeaturedListing {
   farmerProfile?: Farmer;
   buyerProfile?: Buyer;
   unsaved?: boolean; // Add this
+}
+
+
+export interface SmartContract {
+  id: string;
+  contract_id: number;
+  farmer_id: string | null;
+  buyer_id: string | null;
+  crop_name: string;
+  quantity: number;
+  amount_eth: number;
+  advance_amount_eth: number;
+  start_date: string;
+  end_date: string;
+  delivery_method: string | null;
+  delivery_location: string | null;
+  additional_notes: string | null;
+  status: 'PENDING' | 'FUNDED' | 'IN_PROGRESS' | 'DELIVERED' | 'COMPLETED' | 'CANCELLED' | 'DISPUTED' | 'RESOLVED';
+  escrow_balance_eth: number;
+  farmer_confirmed_delivery: boolean;
+  buyer_confirmed_receipt: boolean;
+  is_buyer_initiated: boolean;
+  blockchain_tx_hash: string | null;
+  contract_address: string;
+  created_at: string;
+  updated_at: string;
+  products?: {
+    name: string;
+    description: string | null;
+    unit: string;
+  } | null;
+  farmer?: {
+    name: string; // Matches farmers table
+  } | null;
+  buyer?: {
+    contact_name: string; // Matches buyers table
+  } | null;
 }

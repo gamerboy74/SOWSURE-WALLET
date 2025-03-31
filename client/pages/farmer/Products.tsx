@@ -21,7 +21,7 @@ import "react-loading-skeleton/dist/skeleton.css";
 import ProductCard from "../ProductCard";
 import DialogBox from "../DialogBox";
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from "../../../contract/AgriculturalContract";
-import { toast } from "react-toastify"; // Add this if not already imported
+import { toast } from "react-toastify";
 
 const customStyles = `
   .button-transition {
@@ -66,6 +66,7 @@ interface Product {
   featured: boolean;
   contract_id?: string;
   priceDisplay?: string;
+  contract_status?: string;
 }
 
 interface ProductFormData {
@@ -101,6 +102,7 @@ interface UploadState {
   showDeleteDialog: boolean;
   productToDelete: Product | null;
 }
+
 const initialFormData: ProductFormData = {
   type: "sell",
   name: "",
@@ -143,7 +145,7 @@ function Products() {
   const mountCount = useRef(0);
   const renderCount = useRef(0);
   const loadProductsCount = useRef(0);
-  const ethPriceInINR = prices.eth || 200000; // Fallback value from FarmerProducts
+  const ethPriceInINR = prices.eth || 200000;
 
   useEffect(() => {
     mountCount.current += 1;
@@ -186,13 +188,25 @@ function Products() {
 
       const { data, error } = await supabase
         .from("products")
-        .select("*")
+        .select(`
+          *,
+          contract_id:smart_contracts!contract_id (
+            status
+          )
+        `)
         .eq("farmer_id", farmerData.id)
-        .eq("type", "sell") // Restrict to sell listings like FarmerProducts
+        .eq("type", "sell")
         .order("created_at", { ascending: false });
+
       if (error) throw error;
 
-      setState((prev) => ({ ...prev, products: data || [], loading: false }));
+      // Map data to include contract_status
+      const productsWithContractStatus = (data || []).map((product) => ({
+        ...product,
+        contract_status: product.contract_id?.status || "NO_CONTRACT",
+      }));
+
+      setState((prev) => ({ ...prev, products: productsWithContractStatus, loading: false }));
     } catch (err) {
       console.error("Error loading products:", err);
       setState((prev) => ({
@@ -212,6 +226,9 @@ function Products() {
     const subscription = supabase
       .channel("products-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
+        void loadProducts();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "smart_contracts" }, () => {
         void loadProducts();
       })
       .subscribe();
@@ -275,42 +292,95 @@ function Products() {
       toast.error("Please fix the form errors");
       return;
     }
-  
+
     setState((prev) => ({ ...prev, loading: true }));
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("No authenticated user");
-  
+
       const { data: farmer } = await supabase
         .from("farmers")
         .select("id")
         .eq("user_id", user.id)
         .single();
       if (!farmer) throw new Error("You must be registered as a farmer");
-  
+
       const { data: wallet } = await supabase
         .from("wallets")
         .select("id")
         .eq("user_id", user.id)
         .single();
       if (!wallet) throw new Error("Wallet not found");
-  
+
       let imageUrl = state.formData.image_url || null;
       if (state.formData.image) {
         imageUrl = await uploadImage(state.formData.image);
       }
-  
+
       const priceInEth = (parseFloat(state.formData.price) / ethPriceInINR).toFixed(8);
-  
-      if (!state.editingId && state.formData.type === "sell") {
+      const startDate = new Date();
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 30);
+
+      if (state.editingId) {
+        const { data: product, error: fetchProductError } = await supabase
+          .from("products")
+          .select("contract_id")
+          .eq("id", state.editingId)
+          .single();
+        if (fetchProductError) throw new Error(`Fetch product error: ${fetchProductError.message}`);
+
+        if (product.contract_id) {
+          const { data: contract, error: fetchContractError } = await supabase
+            .from("smart_contracts")
+            .select("status")
+            .eq("contract_id", product.contract_id)
+            .single();
+          if (fetchContractError) throw new Error(`Fetch contract error: ${fetchContractError.message}`);
+
+          if (contract && contract.status === "PENDING") {
+            await WalletService.cancelContract(wallet.id, Number(product.contract_id));
+            toast.success(`Old contract #${product.contract_id} canceled successfully`);
+          } else {
+            throw new Error(`Contract #${product.contract_id} is in ${contract?.status || 'unknown'} state, cannot edit`);
+          }
+        }
+
         const { txHash, contractId } = await WalletService.createSellContract(wallet.id, {
           cropName: state.formData.name,
           quantity: state.formData.quantity,
           amount: priceInEth,
-          startDate: state.formData.startDate.toISOString(),
-          endDate: state.formData.endDate.toISOString(),
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
         });
-  
+
+        const { error } = await supabase
+          .from("products")
+          .update({
+            name: state.formData.name,
+            description: state.formData.description || null,
+            price: parseFloat(priceInEth),
+            quantity: parseFloat(state.formData.quantity),
+            unit: state.formData.unit,
+            category: state.formData.category,
+            image_url: imageUrl,
+            location: state.formData.location,
+            contract_id: contractId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", state.editingId);
+
+        if (error) throw error;
+        toast.success(`Contract updated! New Tx: ${txHash}`);
+      } else {
+        const { txHash, contractId } = await WalletService.createSellContract(wallet.id, {
+          cropName: state.formData.name,
+          quantity: state.formData.quantity,
+          amount: priceInEth,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        });
+
         const { error } = await supabase
           .from("products")
           .insert({
@@ -327,29 +397,11 @@ function Products() {
             location: state.formData.location,
             contract_id: contractId,
           });
-  
+
         if (error) throw error;
         toast.success(`Sell contract created! Tx: ${txHash}`);
-      } else if (state.editingId) {
-        const { error } = await supabase
-          .from("products")
-          .update({
-            name: state.formData.name,
-            description: state.formData.description || null,
-            price: parseFloat(priceInEth),
-            quantity: parseFloat(state.formData.quantity),
-            unit: state.formData.unit,
-            category: state.formData.category,
-            image_url: imageUrl,
-            location: state.formData.location,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", state.editingId);
-  
-        if (error) throw error;
-        toast.success("Sell listing updated!");
       }
-  
+
       await loadProducts();
       setState((prev) => ({
         ...prev,
@@ -370,13 +422,17 @@ function Products() {
   };
 
   const handleEdit = (product: Product) => {
+    const createdAt = new Date();
+    const endDate = new Date(createdAt);
+    endDate.setDate(createdAt.getDate() + 30);
+
     setState((prev) => ({
       ...prev,
       formData: {
         type: product.type,
         name: product.name,
         description: product.description || "",
-        price: (product.price * ethPriceInINR).toString(), // Convert ETH to INR for display
+        price: (product.price * ethPriceInINR).toString(),
         quantity: product.quantity.toString(),
         unit: product.unit,
         category: product.category,
@@ -384,8 +440,8 @@ function Products() {
         image_url: product.image_url || "",
         status: product.status,
         location: product.location,
-        startDate: new Date(), // Note: Dates are not editable post-creation
-        endDate: new Date(new Date().setDate(new Date().getDate() + 30)),
+        startDate: createdAt,
+        endDate: endDate,
       },
       editingId: product.id,
       showForm: true,
@@ -399,14 +455,60 @@ function Products() {
   const confirmDelete = async () => {
     if (!state.productToDelete) return;
     const id = state.productToDelete.id;
-    setState((prev) => ({ ...prev, deleting: id, loading: true }));
     try {
-      const { error } = await supabase.from("products").delete().eq("id", id);
-      if (error) throw error;
+      setState((prev) => ({ ...prev, deleting: id, error: null, showDeleteDialog: false, loading: true }));
 
-      toast.success("Sell listing deleted!");
+      const { data: product, error: fetchProductError } = await supabase
+        .from("products")
+        .select("contract_id")
+        .eq("id", id)
+        .single();
+      if (fetchProductError) throw new Error(`Fetch product error: ${fetchProductError.message}`);
+
+      if (product.contract_id) {
+        const { data: contract, error: fetchContractError } = await supabase
+          .from("smart_contracts")
+          .select("status")
+          .eq("contract_id", product.contract_id)
+          .single();
+        if (fetchContractError) throw new Error(`Fetch contract error: ${fetchContractError.message}`);
+
+        if (contract && contract.status === "PENDING") {
+          const { data: wallet } = await supabase
+            .from("wallets")
+            .select("id")
+            .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+            .single();
+          if (!wallet) throw new Error("Wallet not found");
+
+          await WalletService.cancelContract(wallet.id, Number(product.contract_id));
+          toast.success(`Contract #${product.contract_id} canceled successfully`);
+        } else {
+          console.log(`Contract #${product.contract_id} is in ${contract?.status || 'unknown'} state, skipping cancellation`);
+        }
+      }
+
+      const { error: deleteChatsError } = await supabase
+        .from("chats")
+        .delete()
+        .eq("product_id", id);
+      if (deleteChatsError) throw new Error(`Delete chats error: ${deleteChatsError.message}`);
+
+      const { error: deleteMessagesError } = await supabase
+        .from("messages")
+        .delete()
+        .eq("product_id", id);
+      if (deleteMessagesError) throw new Error(`Delete messages error: ${deleteMessagesError.message}`);
+
+      const { error: deleteError } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", id);
+      if (deleteError) throw new Error(`Delete error: ${deleteError.message}`);
+
       await loadProducts();
-      setState((prev) => ({ ...prev, deleting: null, productToDelete: null, showDeleteDialog: false, loading: false }));
+      setState((prev) => ({ ...prev, deleting: null, productToDelete: null, loading: false }));
+      toast.success("Sell listing deleted successfully!");
     } catch (err) {
       console.error("Error deleting product:", err);
       setState((prev) => ({
@@ -417,7 +519,7 @@ function Products() {
         productToDelete: null,
         loading: false,
       }));
-      toast.error("Failed to delete product");
+      toast.error("Failed to delete sell listing");
     }
   };
 
@@ -432,17 +534,19 @@ function Products() {
   const filteredProducts = useMemo(() => {
     return state.products.filter((product) => {
       const matchesCategory = state.selectedCategory === "all" || product.category === state.selectedCategory;
-      const matchesStatus = state.selectedStatus === "all" || product.status === state.selectedStatus;
+      const matchesStatus = state.selectedStatus === "all" || product.contract_status?.toLowerCase() === state.selectedStatus;
       const matchesSearch =
         product.name.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
         product.description?.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
         false;
-      return matchesCategory && matchesSearch && matchesStatus;
+      return matchesCategory && matchesStatus && matchesSearch;
     });
   }, [state.products, state.selectedCategory, state.selectedStatus, state.searchQuery]);
 
   const getStatusCount = (status: string) => {
-    return state.products.filter((p) => (status === "all" ? true : p.status === status)).length;
+    return state.products.filter((p) => 
+      status === "all" ? true : p.contract_status?.toLowerCase() === status
+    ).length;
   };
 
   const displayAmountInINR = (ethAmount: number) => {
@@ -515,7 +619,7 @@ function Products() {
               disabled={state.uploading || state.loading}
             >
               {state.loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {state.editingId ? "Update Listing" : "Create Listing"}
+              {state.editingId ? "Update Contract" : "Create Listing"}
             </button>
           </>}
         >
@@ -655,27 +759,27 @@ function Products() {
           isOpen={state.showDeleteDialog}
           onClose={cancelDelete}
           title="Confirm Deletion"
-            footer={<>
-              <button onClick={cancelDelete} className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm">
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm flex items-center"
-                disabled={state.deleting === state.productToDelete?.id}
-              >
-                {state.deleting === state.productToDelete?.id ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Deleting...
-                  </>
-                ) : (
-                  "Delete"
-                )}
-              </button>
-            </>}
-            contentClassName={""}
-          >
+          footer={<>
+            <button onClick={cancelDelete} className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm">
+              Cancel
+            </button>
+            <button
+              onClick={confirmDelete}
+              className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm flex items-center"
+              disabled={state.deleting === state.productToDelete?.id}
+            >
+              {state.deleting === state.productToDelete?.id ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </button>
+          </>}
+          contentClassName={""}
+        >
           {state.productToDelete && (
             <div className="flex items-center space-x-3">
               <Trash2 className="h-6 w-6 text-red-600" />
@@ -709,8 +813,8 @@ function Products() {
                 <option value="grains">Grains</option>
                 <option value="vegetables">Vegetables</option>
                 <option value="fruits">Fruits</option>
-                <option value="fruits">Pulses</option>
-                <option value="fruits">Herbs</option>
+                <option value="pulses">Pulses</option>
+                <option value="herbs">Herbs</option>
               </select>
             </div>
           </div>
@@ -718,7 +822,7 @@ function Products() {
 
         <div className="mb-6">
           <div className="flex space-x-2 overflow-x-auto pb-2">
-            {["all", "active", "funded", "in_progress", "completed"].map((status) => (
+            {["all", "pending", "funded", "in_progress", "completed"].map((status) => (
               <button
                 key={status}
                 onClick={() => setState((prev) => ({ ...prev, selectedStatus: status }))}
@@ -741,12 +845,13 @@ function Products() {
               product={{
                 ...product,
                 priceDisplay: `₹${displayAmountInINR(product.price)} (${product.price} ETH)`,
+                statusDisplay: `Product: ${product.status} | Contract: ${product.contract_status || "None"}`,
+                totalPrice: product.price * product.quantity,
               }}
               onEdit={handleEdit}
               onDelete={() => handleDelete(product)}
               deleting={state.deleting}
-              handleImageError={handleProductImageError}
-            />
+              handleImageError={handleProductImageError} priceDisplay={""}            />
           ))}
         </div>
       </div>

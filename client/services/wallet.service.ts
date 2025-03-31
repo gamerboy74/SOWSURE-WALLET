@@ -1168,13 +1168,7 @@ export class WalletService {
       cancelContract(contractId: number, overrides?: { gasLimit?: number }): Promise<TransactionResponse>;
     };
 
-    // Check contract details to ensure it's cancellable
-    const contractDetails = await contractWithSigner.getContractDetails(contractId);
-    if (contractDetails.status.status !== "PENDING") {
-      throw new Error(`Contract ${contractId} is not in PENDING state and cannot be cancelled`);
-    }
-
-    // Execute the cancelContract transaction
+    // Execute the cancelContract transaction without re-checking status
     const tx = await contractWithSigner.cancelContract(contractId, { gasLimit: 200000 });
 
     // Wait for transaction confirmation
@@ -1195,7 +1189,8 @@ export class WalletService {
       throw new Error(`Failed to update contract status: ${updateError.message}`);
     }
 
-    // If buyer-initiated, record the refund transaction
+    // Fetch contract details for refund logic (if applicable)
+    const contractDetails = await contractWithSigner.getContractDetails(contractId);
     if (contractDetails.status.isBuyerInitiated && contractDetails.status.escrowBalance > 0n) {
       const refundAmount = formatEther(contractDetails.status.escrowBalance);
       const newTx = await this.createTransaction(

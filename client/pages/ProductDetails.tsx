@@ -308,7 +308,6 @@ function ProductDetails() {
         if (!receipt || receipt.status !== 1) throw new Error(`Transaction failed: ${tx.hash}`);
         txHash = tx.hash;
 
-        // Call sync_farmer_acceptance
         const { error: rpcError } = await supabase.rpc("sync_farmer_acceptance", {
           p_contract_id: Number(product.contract_id),
           p_farmer_id: farmer.id,
@@ -316,7 +315,6 @@ function ProductDetails() {
         });
         if (rpcError) throw new Error(`RPC sync_farmer_acceptance error: ${rpcError.message}`);
 
-        // Update products table after successful smart_contracts update
         const { error: updateError } = await supabase
           .from("products")
           .update({ status: "funded", farmer_id: farmer.id })
@@ -627,28 +625,39 @@ function ProductDetails() {
                   </button>
                 </div>
               </div>
-
               <div className="p-6 grid grid-cols-2 gap-6 text-sm">
-                <div className="space-y-2">
-                  <div className="text-sm text-gray-500">Price</div>
-                  <div className="text-2xl font-bold text-emerald-600">
-                    ₹{displayAmountInINR(product.price)} ({product.price} ETH)/{product.unit}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="text-sm text-gray-500">Quantity</div>
-                  <div className="text-2xl font-semibold text-gray-900">
-                    {product.quantity} {product.unit}
-                  </div>
-                </div>
-              </div>
+  <div className="space-y-2">
+    <div className="text-sm text-gray-500">Price</div>
+    <div className="text-2xl font-bold text-emerald-600">
+      {product.type === "buy" ? (
+        // For "buy" listings, price is in INR, convert to ETH for display
+        `₹${product.price.toFixed(2)} (${(product.price / state.ethPriceInINR).toFixed(6)} ETH)/${product.unit}`
+      ) : (
+        // For "sell" listings, keep original logic (assuming price in ETH)
+        `₹${displayAmountInINR(product.price)} (${product.price} ETH)/${product.unit}`
+      )}
+    </div>
+  </div>
+  <div className="space-y-2">
+    <div className="text-sm text-gray-500">Quantity</div>
+    <div className="text-2xl font-semibold text-gray-900">
+      {product.quantity} {product.unit}
+    </div>
+  </div>
+</div>
 
-              <div className="p-6 text-right border-t border-gray-100">
-                <p className="text-gray-500">Total Contract Value</p>
-                <p className="text-lg font-bold text-gray-900">
-                  ₹{displayAmountInINR(product.price * product.quantity)}
-                </p>
-              </div>
+<div className="p-6 text-right border-t border-gray-100">
+  <p className="text-gray-500">Total Contract Value</p>
+  <p className="text-lg font-bold text-gray-900">
+    {product.type === "buy" ? (
+      // Total in INR for "buy"
+      `₹${(product.price * product.quantity).toFixed(2)}`
+    ) : (
+      // Total in INR for "sell" (assuming price in ETH)
+      `₹${displayAmountInINR(product.price * product.quantity)}`
+    )}
+  </p>
+</div>
             </div>
 
             <div className="bg-white/80 backdrop-blur-sm rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 transform hover:scale-[1.01] p-6">

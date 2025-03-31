@@ -86,6 +86,26 @@ function Marketplace() {
   const limit = 10;
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [ethPriceInINR, setEthPriceInINR] = useState<number | null>(null);
+
+  // Fetch ETH price in INR on mount
+  useEffect(() => {
+    const fetchEthPrice = async () => {
+      try {
+        const price = await WalletService.getEthPriceInINR();
+        setEthPriceInINR(price);
+      } catch (err) {
+        console.error("Failed to fetch ETH price:", err);
+        setEthPriceInINR(200000); // Fallback value
+      }
+    };
+    fetchEthPrice();
+  }, []);
+
+  const displayAmountInINR = (ethAmount: number, unit: string) => {
+    if (ethPriceInINR === null) return `₹${ethAmount.toFixed(2)}/${unit}`; // Fallback if price not loaded
+    return `₹${(ethAmount * ethPriceInINR).toFixed(2)}/${unit}`;
+  };
 
   const loadMarketplaceProducts = useCallback(
     async (isFirstLoad = false) => {
@@ -126,12 +146,11 @@ function Marketplace() {
             )
           `
           )
-          .eq("smart_contracts.status", "PENDING"); // Filter for PENDING contracts
+          .eq("smart_contracts.status", "PENDING");
 
         const provider = WalletService.provider || new ethers.JsonRpcProvider("http://localhost:8545");
         const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
 
-        // Apply additional filters
         if (selectedCategory !== "all") {
           query = query.eq("category", selectedCategory);
         }
@@ -152,7 +171,6 @@ function Marketplace() {
           return;
         }
 
-        // Sync with blockchain status
         const syncedProducts = await Promise.all(
           data.map(async (product) => {
             if (product.smart_contracts && product.smart_contracts.contract_id) {
@@ -167,6 +185,11 @@ function Marketplace() {
                     .eq("contract_id", product.smart_contracts.contract_id);
                   product.smart_contracts.status = onChainStatus;
                 }
+                // Optionally sync price from contract if it differs
+                const contractPrice = Number(ethers.formatEther(details.basic.amount));
+                if (product.price !== contractPrice) {
+                  product.price = contractPrice; // Update price from contract if needed
+                }
               } catch (err) {
                 console.error(`Error syncing contract ${product.smart_contracts.contract_id}:`, err);
               }
@@ -175,7 +198,6 @@ function Marketplace() {
           })
         );
 
-        // Filter for PENDING status (after sync)
         const pendingProducts = syncedProducts.filter(
           (product) => product.smart_contracts && product.smart_contracts.status === "PENDING"
         );
@@ -191,7 +213,7 @@ function Marketplace() {
           type: product.type,
           title: product.name,
           quantity: `${product.quantity} ${product.unit}`,
-          price: `₹${product.price}/${product.unit}`,
+          price: displayAmountInINR(product.price, product.unit), // Convert ETH to INR
           location: product.location,
           image_url: product.image_url,
           user: {
@@ -223,7 +245,7 @@ function Marketplace() {
         isFetchingRef.current = false;
       }
     },
-    [page, products, searchQuery, selectedCategory]
+    [page, products, searchQuery, selectedCategory, ethPriceInINR]
   );
 
   useEffect(() => {

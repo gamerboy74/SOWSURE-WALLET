@@ -1884,3 +1884,19 @@ USING (
     AND smart_contracts.farmer_id = (SELECT id FROM farmers WHERE user_id = auth.uid())
   )
 );
+
+
+ALTER TABLE messages
+DROP CONSTRAINT messages_product_id_fkey,
+ADD CONSTRAINT messages_product_id_fkey
+  FOREIGN KEY (product_id)
+  REFERENCES products (id)
+  ON DELETE CASCADE;
+
+
+  ALTER TABLE chats
+DROP CONSTRAINT chats_product_id_fkey,
+ADD CONSTRAINT chats_product_id_fkey
+  FOREIGN KEY (product_id)
+  REFERENCES products (id)
+  ON DELETE CASCADE;
