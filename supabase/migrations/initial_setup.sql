@@ -265,43 +265,124 @@ CREATE TRIGGER update_site_settings_timestamp BEFORE UPDATE ON site_settings FOR
 INSERT INTO site_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 -- Add Notifications System
-CREATE TABLE IF NOT EXISTS notifications (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid REFERENCES auth.users NOT NULL,
-  title text NOT NULL,
-  message text NOT NULL,
-  type text NOT NULL,
-  read boolean DEFAULT false,
-  created_at timestamptz DEFAULT now(),
-  read_at timestamptz,
-  data jsonb DEFAULT '{}'::jsonb,
-  CONSTRAINT valid_type CHECK (type IN ('system', 'order', 'message', 'payment', 'alert'))
-);
+-- Create the parent notifications table with partitioning by range on created_at
+CREATE TABLE notifications (
+  id UUID DEFAULT gen_random_uuid(), -- No PRIMARY KEY here yet
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('system', 'order', 'message', 'payment', 'alert')),
+  read BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  read_at TIMESTAMPTZ,
+  data JSONB DEFAULT '{}'::jsonb,
+  contract_id BIGINT REFERENCES smart_contracts(contract_id) ON DELETE SET NULL,
+  aggregate_count INT DEFAULT 1 CHECK (aggregate_count >= 1)
+) PARTITION BY RANGE (created_at);
 
+-- Create an initial partition for 2025
+CREATE TABLE notifications_2025 PARTITION OF notifications
+FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+
+-- Add a unique index instead of a primary key
+CREATE UNIQUE INDEX notifications_pk ON notifications (id, created_at);
+
+-- Enable Row-Level Security
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own notifications"
-  ON notifications
+-- Add other indexes for performance
+CREATE INDEX idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX idx_notifications_user_id_created_at ON notifications(user_id, created_at DESC);
+CREATE INDEX idx_notifications_read ON notifications(read);
+CREATE INDEX idx_notifications_contract_id ON notifications(contract_id);
+
+-- Recreate policies
+CREATE POLICY "Users can view own notifications" ON notifications
   FOR SELECT
   TO authenticated
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own notifications"
-  ON notifications
+CREATE POLICY "Users can update own notifications" ON notifications
   FOR UPDATE
   TO authenticated
   USING (auth.uid() = user_id);
 
--- Insert sample notifications with corrected user_id
-INSERT INTO notifications (user_id, title, message, type, data)
-SELECT 
-  id,  -- Changed from auth.uid() to id
-  'Welcome to FarmConnect!',
-  'Thank you for joining our platform. Start exploring the marketplace today.',
-  'system',
-  '{"action": "explore_marketplace", "url": "/marketplace"}'::jsonb
-FROM auth.users
-WHERE auth.users.email = 'admin@farmconnect.com';
+CREATE POLICY "Admins can insert notifications" ON notifications
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+CREATE POLICY "Admins can view all notifications" ON notifications
+  FOR SELECT
+  TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+CREATE POLICY "Admins can update all notifications" ON notifications
+  FOR UPDATE
+  TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+CREATE POLICY "Admins can delete notifications" ON notifications
+  FOR DELETE
+  TO authenticated
+  USING (EXISTS (SELECT 1 FROM admin_users WHERE user_id = auth.uid()));
+
+CREATE POLICY "Users can create own notifications" ON notifications
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+-- Recreate mark_notification_read function
+CREATE OR REPLACE FUNCTION mark_notification_read(p_notification_id UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE notifications
+  SET read = true, read_at = NOW()
+  WHERE id = p_notification_id
+  AND user_id = auth.uid();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION mark_notification_read TO authenticated;
+
+-- Notification count tracking
+CREATE TABLE IF NOT EXISTS notification_counts (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  unread_count INT DEFAULT 0 CHECK (unread_count >= 0),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION update_notification_count() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.read = false THEN
+    INSERT INTO notification_counts (user_id, unread_count)
+    VALUES (NEW.user_id, 1)
+    ON CONFLICT (user_id) DO UPDATE SET unread_count = notification_counts.unread_count + 1;
+  ELSIF TG_OP = 'UPDATE' AND OLD.read = false AND NEW.read = true THEN
+    UPDATE notification_counts
+    SET unread_count = GREATEST(unread_count - 1, 0),
+        updated_at = NOW()
+    WHERE user_id = NEW.user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER notification_count_trigger
+AFTER INSERT OR UPDATE OF read ON notifications
+FOR EACH ROW EXECUTE FUNCTION update_notification_count();
+
+
+CREATE OR REPLACE FUNCTION notify_users(p_users UUID[], p_title TEXT, p_message TEXT, p_type TEXT, p_data JSONB, p_contract_id BIGINT DEFAULT NULL)
+RETURNS VOID AS $$
+BEGIN
+  INSERT INTO notifications (user_id, title, message, type, data, contract_id, created_at)
+  SELECT unnest(p_users), p_title, p_message, p_type, p_data, p_contract_id, NOW();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execution permission to authenticated users
+GRANT EXECUTE ON FUNCTION notify_users TO authenticated;
 
 -- Add Products Management System
 DROP TABLE IF EXISTS products CASCADE;

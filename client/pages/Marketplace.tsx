@@ -87,6 +87,27 @@ function Marketplace() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [ethPriceInINR, setEthPriceInINR] = useState<number | null>(null);
+  const [siteName, setSiteName] = useState("FarmConnect"); // Default value
+
+  // Fetch site name from site_settings table
+  useEffect(() => {
+    const fetchSiteName = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("site_settings")
+          .select("site_name")
+          .single(); // Assumes one row with site settings
+        if (error) throw error;
+        if (data && data.site_name) {
+          setSiteName(data.site_name);
+        }
+      } catch (err) {
+        console.error("Failed to fetch site name:", err);
+        // Keep default "FarmConnect" if fetch fails
+      }
+    };
+    fetchSiteName();
+  }, []);
 
   // Fetch ETH price in INR on mount
   useEffect(() => {
@@ -185,7 +206,6 @@ function Marketplace() {
                     .eq("contract_id", product.smart_contracts.contract_id);
                   product.smart_contracts.status = onChainStatus;
                 }
-                // Optionally sync price from contract if it differs
                 const contractPrice = Number(ethers.formatEther(details.basic.amount));
                 if (product.price !== contractPrice) {
                   product.price = contractPrice; // Update price from contract if needed
@@ -213,7 +233,7 @@ function Marketplace() {
           type: product.type,
           title: product.name,
           quantity: `${product.quantity} ${product.unit}`,
-          price: displayAmountInINR(product.price, product.unit), // Convert ETH to INR
+          price: displayAmountInINR(product.price, product.unit),
           location: product.location,
           image_url: product.image_url,
           user: {
@@ -306,17 +326,11 @@ function Marketplace() {
     []
   );
 
-  const handleNewListing = () => {
-    console.log("Create new listing");
-    // navigate("/create-listing");
-  };
-
   if (loading && page === 1) {
     return (
       <div className="min-h-screen p-4 max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <Skeleton width={200} height={32} />
-          <Skeleton width={150} height={40} />
         </div>
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <Skeleton width="100%" height={40} />
@@ -340,7 +354,7 @@ function Marketplace() {
     <div className="min-h-screen bg-gray-50 py-8">
       <style>{customStyles}</style>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <MarketplaceHeader onNewListing={handleNewListing} page={page} />
+        <MarketplaceHeader page={page} siteName={siteName} />
 
         {error && (
           <div className="mb-6 bg-red-50 text-red-600 p-4 rounded-lg flex items-center justify-between shadow-sm transition-all duration-300 hover:shadow-md">

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect } from "react";
-import { toast, ToastOptions } from "react-hot-toast";
+import { toast, ToastOptions, Toast } from "react-hot-toast";
 import { AlertCircle, CheckCircle, Info, AlertTriangle, LucideIcon } from "lucide-react";
 import { supabase } from "../../client/lib/supabase";
 
@@ -23,12 +23,12 @@ const defaultOptions: CustomToastOptions = {
 };
 
 interface ToastComponentProps {
-  t: any; // Consider typing this as Toast from react-hot-toast if possible
+  t: Toast; // Use react-hot-toast's Toast type
   title: string;
   message: string;
   icon: LucideIcon;
   iconColor: string;
-  id: string; // Added id to props
+  id: string; // Add id for marking as read
 }
 
 const ToastComponent = ({ t, title, message, icon: Icon, iconColor, id }: ToastComponentProps) => (
@@ -72,7 +72,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           message={message}
           icon={CheckCircle}
           iconColor="text-emerald-500"
-          id={options?.id || ""} // Default to empty string if no id
+          id={options?.id || ""}
         />
       ),
       { ...defaultOptions, ...options }
@@ -123,6 +123,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       { ...defaultOptions, ...options }
     );
 
+  // Real-time subscription with Supabase
   useEffect(() => {
     let channel: ReturnType<typeof supabase.channel> | undefined;
 

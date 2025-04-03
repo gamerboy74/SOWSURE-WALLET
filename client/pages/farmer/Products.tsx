@@ -1,8 +1,13 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import { supabase } from "../../lib/supabase";
 import { WalletService } from "../../services/wallet.service";
 import { useWallet } from "../../hooks/useWallet";
-import { ethers } from "ethers";
 import {
   Plus,
   Search,
@@ -20,32 +25,15 @@ import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import ProductCard from "../ProductCard";
 import DialogBox from "../DialogBox";
-import { CONTRACT_ADDRESS, CONTRACT_ABI } from "../../../contract/AgriculturalContract";
 import { toast } from "react-toastify";
+import { useNotification } from "../../../src/context/NotificationContext";
 
 const customStyles = `
-  .button-transition {
-    transition: all 0.2s ease-in-out;
-  }
-  .product-grid {
-    display: grid;
-    gap: 1rem;
-  }
-  @media (min-width: 640px) {
-    .product-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-  @media (min-width: 1024px) {
-    .product-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-  @media (min-width: 1280px) {
-    .product-grid {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-  }
+  .button-transition { transition: all 0.2s ease-in-out; }
+  .product-grid { display: grid; gap: 1rem; }
+  @media (min-width: 640px) { .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1024px) { .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 1280px) { .product-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 `;
 
 interface Product {
@@ -55,7 +43,7 @@ interface Product {
   type: "sell" | "buy";
   name: string;
   description: string | null;
-  price: number;
+  price: number; // Stored in ETH
   quantity: number;
   unit: string;
   category: string;
@@ -73,7 +61,7 @@ interface ProductFormData {
   type: "sell" | "buy";
   name: string;
   description: string;
-  price: string;
+  price: string; // Input as INR string, converted to ETH
   quantity: string;
   unit: string;
   category: string;
@@ -140,12 +128,13 @@ const initialUploadState: UploadState = {
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 function Products() {
+  const { success, error: notifyError } = useNotification();
   const [state, setState] = useState<UploadState>(initialUploadState);
   const { address, balance, prices, loading: walletLoading } = useWallet();
   const mountCount = useRef(0);
   const renderCount = useRef(0);
   const loadProductsCount = useRef(0);
-  const ethPriceInINR = prices.eth || 200000;
+  const ethPriceInINR = prices.eth || 200000; // INR per ETH
 
   useEffect(() => {
     mountCount.current += 1;
@@ -156,17 +145,30 @@ function Products() {
   }, []);
 
   renderCount.current += 1;
-  console.log(`Products rendered, render count: ${renderCount.current}, userId: ${state.userId}`);
+  console.log(
+    `Products rendered, render count: ${renderCount.current}, userId: ${state.userId}`
+  );
 
   useEffect(() => {
     const fetchUserId = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (user) setState((prev) => ({ ...prev, userId: user.id }));
-        else setState((prev) => ({ ...prev, error: "No authenticated user", loading: false }));
+        else
+          setState((prev) => ({
+            ...prev,
+            error: "No authenticated user",
+            loading: false,
+          }));
       } catch (err) {
         console.error("Error fetching user:", err);
-        setState((prev) => ({ ...prev, error: "Failed to fetch user", loading: false }));
+        setState((prev) => ({
+          ...prev,
+          error: "Failed to fetch user",
+          loading: false,
+        }));
       }
     };
     fetchUserId();
@@ -175,7 +177,9 @@ function Products() {
   const loadProducts = useCallback(async () => {
     if (!state.userId) return;
     loadProductsCount.current += 1;
-    console.log(`loadProducts called, count: ${loadProductsCount.current}, userId: ${state.userId}`);
+    console.log(
+      `loadProducts called, count: ${loadProductsCount.current}, userId: ${state.userId}`
+    );
     try {
       setState((prev) => ({ ...prev, loading: true, error: null }));
       const { data: farmerData } = await supabase
@@ -188,25 +192,30 @@ function Products() {
 
       const { data, error } = await supabase
         .from("products")
-        .select(`
+        .select(
+          `
           *,
           contract_id:smart_contracts!contract_id (
             status
           )
-        `)
+        `
+        )
         .eq("farmer_id", farmerData.id)
         .eq("type", "sell")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
 
-      // Map data to include contract_status
       const productsWithContractStatus = (data || []).map((product) => ({
         ...product,
         contract_status: product.contract_id?.status || "NO_CONTRACT",
       }));
 
-      setState((prev) => ({ ...prev, products: productsWithContractStatus, loading: false }));
+      setState((prev) => ({
+        ...prev,
+        products: productsWithContractStatus,
+        loading: false,
+      }));
     } catch (err) {
       console.error("Error loading products:", err);
       setState((prev) => ({
@@ -225,12 +234,20 @@ function Products() {
     if (!state.userId) return;
     const subscription = supabase
       .channel("products-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
-        void loadProducts();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "smart_contracts" }, () => {
-        void loadProducts();
-      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "products" },
+        () => {
+          void loadProducts();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "smart_contracts" },
+        () => {
+          void loadProducts();
+        }
+      )
       .subscribe();
     return () => {
       void subscription.unsubscribe();
@@ -244,7 +261,8 @@ function Products() {
       .from("product-images")
       .upload(fileName, file);
     if (error) throw error;
-    return supabase.storage.from("product-images").getPublicUrl(fileName).data.publicUrl;
+    return supabase.storage.from("product-images").getPublicUrl(fileName).data
+      .publicUrl;
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -277,9 +295,11 @@ function Products() {
     const errors: Partial<ProductFormData> = {};
     if (!data.name.trim()) errors.name = "Name is required";
     const price = parseFloat(data.price);
-    if (isNaN(price) || price <= 0) errors.price = "Price must be a positive number";
+    if (isNaN(price) || price <= 0)
+      errors.price = "Price must be a positive number";
     const quantity = parseFloat(data.quantity);
-    if (isNaN(quantity) || quantity <= 0) errors.quantity = "Quantity must be a positive number";
+    if (isNaN(quantity) || quantity <= 0)
+      errors.quantity = "Quantity must be a positive number";
     if (!data.location.trim()) errors.location = "Location is required";
     return errors;
   };
@@ -289,13 +309,15 @@ function Products() {
     const errors = validateForm(state.formData);
     if (Object.keys(errors).length > 0) {
       setState((prev) => ({ ...prev, error: "Please fix the form errors" }));
-      toast.error("Please fix the form errors");
+      notifyError("Please fix the form errors");
       return;
     }
 
     setState((prev) => ({ ...prev, loading: true }));
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error("No authenticated user");
 
       const { data: farmer } = await supabase
@@ -317,18 +339,21 @@ function Products() {
         imageUrl = await uploadImage(state.formData.image);
       }
 
-      const priceInEth = (parseFloat(state.formData.price) / ethPriceInINR).toFixed(8);
+      const priceInINR = parseFloat(state.formData.price); // Price input in INR
+      const priceInEth = (priceInINR / ethPriceInINR).toFixed(8); // Convert to ETH
       const startDate = new Date();
       const endDate = new Date(startDate);
       endDate.setDate(startDate.getDate() + 30);
 
+      let productId: string;
       if (state.editingId) {
         const { data: product, error: fetchProductError } = await supabase
           .from("products")
           .select("contract_id")
           .eq("id", state.editingId)
           .single();
-        if (fetchProductError) throw new Error(`Fetch product error: ${fetchProductError.message}`);
+        if (fetchProductError)
+          throw new Error(`Fetch product error: ${fetchProductError.message}`);
 
         if (product.contract_id) {
           const { data: contract, error: fetchContractError } = await supabase
@@ -336,30 +361,45 @@ function Products() {
             .select("status")
             .eq("contract_id", product.contract_id)
             .single();
-          if (fetchContractError) throw new Error(`Fetch contract error: ${fetchContractError.message}`);
+          if (fetchContractError)
+            throw new Error(
+              `Fetch contract error: ${fetchContractError.message}`
+            );
 
           if (contract && contract.status === "PENDING") {
-            await WalletService.cancelContract(wallet.id, Number(product.contract_id));
-            toast.success(`Old contract #${product.contract_id} canceled successfully`);
+            await WalletService.cancelContract(
+              wallet.id,
+              Number(product.contract_id)
+            );
+            toast.success(
+              `Old contract #${product.contract_id} canceled successfully`
+            );
           } else {
-            throw new Error(`Contract #${product.contract_id} is in ${contract?.status || 'unknown'} state, cannot edit`);
+            throw new Error(
+              `Contract #${product.contract_id} is in ${
+                contract?.status || "unknown"
+              } state, cannot edit`
+            );
           }
         }
 
-        const { txHash, contractId } = await WalletService.createSellContract(wallet.id, {
-          cropName: state.formData.name,
-          quantity: state.formData.quantity,
-          amount: priceInEth,
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-        });
+        const { txHash, contractId } = await WalletService.createSellContract(
+          wallet.id,
+          {
+            cropName: state.formData.name,
+            quantity: state.formData.quantity,
+            amount: priceInEth, // Pass price in ETH to the contract
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+          }
+        );
 
         const { error } = await supabase
           .from("products")
           .update({
             name: state.formData.name,
             description: state.formData.description || null,
-            price: parseFloat(priceInEth),
+            price: parseFloat(priceInEth), // Store in ETH
             quantity: parseFloat(state.formData.quantity),
             unit: state.formData.unit,
             category: state.formData.category,
@@ -371,24 +411,54 @@ function Products() {
           .eq("id", state.editingId);
 
         if (error) throw error;
-        toast.success(`Contract updated! New Tx: ${txHash}`);
-      } else {
-        const { txHash, contractId } = await WalletService.createSellContract(wallet.id, {
-          cropName: state.formData.name,
-          quantity: state.formData.quantity,
-          amount: priceInEth,
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-        });
+        productId = state.editingId;
 
-        const { error } = await supabase
+        const { data: buyers, error: buyersError } = await supabase
+          .from("buyers")
+          .select("user_id");
+        if (buyersError)
+          throw new Error(`Buyers fetch error: ${buyersError.message}`);
+
+        const buyerIds = buyers.map(
+          (buyer: { user_id: string }) => buyer.user_id
+        );
+        const { error: notifyError } = await supabase.rpc("notify_users", {
+          p_users: buyerIds,
+          p_title: "Sell Listing Updated",
+          p_message: `${
+            state.formData.name
+          } (Contract #${contractId}) has been updated. Available until ${endDate.toLocaleDateString()}.`,
+          p_type: "order",
+          p_data: { contract_id: contractId, product_id: state.editingId },
+          p_contract_id: Number(contractId),
+        });
+        if (notifyError)
+          throw new Error(`Notification error: ${notifyError.message}`);
+
+        toast.success(`Contract updated! New Tx: ${txHash}`);
+        success(
+          `Sell listing for ${state.formData.name} updated! Contract #${contractId}`
+        );
+      } else {
+        const { txHash, contractId } = await WalletService.createSellContract(
+          wallet.id,
+          {
+            cropName: state.formData.name,
+            quantity: state.formData.quantity,
+            amount: priceInEth, // Pass price in ETH to the contract
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+          }
+        );
+
+        const { data, error } = await supabase
           .from("products")
           .insert({
             farmer_id: farmer.id,
             type: "sell",
             name: state.formData.name,
             description: state.formData.description || null,
-            price: parseFloat(priceInEth),
+            price: parseFloat(priceInEth), // Store in ETH
             quantity: parseFloat(state.formData.quantity),
             unit: state.formData.unit,
             category: state.formData.category,
@@ -396,10 +466,39 @@ function Products() {
             status: "active",
             location: state.formData.location,
             contract_id: contractId,
-          });
+          })
+          .select()
+          .single();
 
         if (error) throw error;
+        productId = data.id;
+
+        const { data: buyers, error: buyersError } = await supabase
+          .from("buyers")
+          .select("user_id");
+        if (buyersError)
+          throw new Error(`Buyers fetch error: ${buyersError.message}`);
+
+        const buyerIds = buyers.map(
+          (buyer: { user_id: string }) => buyer.user_id
+        );
+        const { error: notifyError } = await supabase.rpc("notify_users", {
+          p_users: buyerIds,
+          p_title: "New Sell Listing",
+          p_message: `A new sell listing for ${
+            state.formData.name
+          } (Contract #${contractId}) is available until ${endDate.toLocaleDateString()}.`,
+          p_type: "order",
+          p_data: { contract_id: contractId, product_id: data.id },
+          p_contract_id: Number(contractId),
+        });
+        if (notifyError)
+          throw new Error(`Notification error: ${notifyError.message}`);
+
         toast.success(`Sell contract created! Tx: ${txHash}`);
+        success(
+          `Sell listing for ${state.formData.name} created! Contract #${contractId}`
+        );
       }
 
       await loadProducts();
@@ -417,7 +516,9 @@ function Products() {
         error: err instanceof Error ? err.message : "Failed to save product",
         loading: false,
       }));
-      toast.error("Failed to save product");
+      notifyError(
+        err instanceof Error ? err.message : "Failed to save sell listing"
+      );
     }
   };
 
@@ -426,13 +527,15 @@ function Products() {
     const endDate = new Date(createdAt);
     endDate.setDate(createdAt.getDate() + 30);
 
+    const priceInINR = (product.price * ethPriceInINR).toFixed(2); // Convert ETH back to INR for form display
+
     setState((prev) => ({
       ...prev,
       formData: {
         type: product.type,
         name: product.name,
         description: product.description || "",
-        price: (product.price * ethPriceInINR).toString(),
+        price: priceInINR, // Display in INR
         quantity: product.quantity.toString(),
         unit: product.unit,
         category: product.category,
@@ -449,21 +552,32 @@ function Products() {
   };
 
   const handleDelete = (product: Product) => {
-    setState((prev) => ({ ...prev, showDeleteDialog: true, productToDelete: product }));
+    setState((prev) => ({
+      ...prev,
+      showDeleteDialog: true,
+      productToDelete: product,
+    }));
   };
 
   const confirmDelete = async () => {
     if (!state.productToDelete) return;
     const id = state.productToDelete.id;
     try {
-      setState((prev) => ({ ...prev, deleting: id, error: null, showDeleteDialog: false, loading: true }));
+      setState((prev) => ({
+        ...prev,
+        deleting: id,
+        error: null,
+        showDeleteDialog: false,
+        loading: true,
+      }));
 
       const { data: product, error: fetchProductError } = await supabase
         .from("products")
         .select("contract_id")
         .eq("id", id)
         .single();
-      if (fetchProductError) throw new Error(`Fetch product error: ${fetchProductError.message}`);
+      if (fetchProductError)
+        throw new Error(`Fetch product error: ${fetchProductError.message}`);
 
       if (product.contract_id) {
         const { data: contract, error: fetchContractError } = await supabase
@@ -471,7 +585,10 @@ function Products() {
           .select("status")
           .eq("contract_id", product.contract_id)
           .single();
-        if (fetchContractError) throw new Error(`Fetch contract error: ${fetchContractError.message}`);
+        if (fetchContractError)
+          throw new Error(
+            `Fetch contract error: ${fetchContractError.message}`
+          );
 
         if (contract && contract.status === "PENDING") {
           const { data: wallet } = await supabase
@@ -481,24 +598,40 @@ function Products() {
             .single();
           if (!wallet) throw new Error("Wallet not found");
 
-          await WalletService.cancelContract(wallet.id, Number(product.contract_id));
-          toast.success(`Contract #${product.contract_id} canceled successfully`);
-        } else {
-          console.log(`Contract #${product.contract_id} is in ${contract?.status || 'unknown'} state, skipping cancellation`);
+          await WalletService.cancelContract(
+            wallet.id,
+            Number(product.contract_id)
+          );
+          toast.success(
+            `Contract #${product.contract_id} canceled successfully`
+          );
         }
+
+        const { error: deleteNotificationsError } = await supabase
+          .from("notifications")
+          .delete()
+          .eq("contract_id", product.contract_id);
+        if (deleteNotificationsError)
+          throw new Error(
+            `Delete notifications error: ${deleteNotificationsError.message}`
+          );
       }
 
       const { error: deleteChatsError } = await supabase
         .from("chats")
         .delete()
         .eq("product_id", id);
-      if (deleteChatsError) throw new Error(`Delete chats error: ${deleteChatsError.message}`);
+      if (deleteChatsError)
+        throw new Error(`Delete chats error: ${deleteChatsError.message}`);
 
       const { error: deleteMessagesError } = await supabase
         .from("messages")
         .delete()
         .eq("product_id", id);
-      if (deleteMessagesError) throw new Error(`Delete messages error: ${deleteMessagesError.message}`);
+      if (deleteMessagesError)
+        throw new Error(
+          `Delete messages error: ${deleteMessagesError.message}`
+        );
 
       const { error: deleteError } = await supabase
         .from("products")
@@ -507,8 +640,13 @@ function Products() {
       if (deleteError) throw new Error(`Delete error: ${deleteError.message}`);
 
       await loadProducts();
-      setState((prev) => ({ ...prev, deleting: null, productToDelete: null, loading: false }));
-      toast.success("Sell listing deleted successfully!");
+      setState((prev) => ({
+        ...prev,
+        deleting: null,
+        productToDelete: null,
+        loading: false,
+      }));
+      success("Sell listing and related notifications deleted successfully!");
     } catch (err) {
       console.error("Error deleting product:", err);
       setState((prev) => ({
@@ -519,38 +657,56 @@ function Products() {
         productToDelete: null,
         loading: false,
       }));
-      toast.error("Failed to delete sell listing");
+      notifyError("Failed to delete sell listing");
     }
   };
 
   const cancelDelete = () => {
-    setState((prev) => ({ ...prev, showDeleteDialog: false, productToDelete: null }));
+    setState((prev) => ({
+      ...prev,
+      showDeleteDialog: false,
+      productToDelete: null,
+    }));
   };
 
-  const debouncedSetSearchQuery = useCallback(debounce((value: string) => {
-    setState((prev) => ({ ...prev, searchQuery: value }));
-  }, 300), []);
+  const debouncedSetSearchQuery = useCallback(
+    debounce((value: string) => {
+      setState((prev) => ({ ...prev, searchQuery: value }));
+    }, 300),
+    []
+  );
 
   const filteredProducts = useMemo(() => {
     return state.products.filter((product) => {
-      const matchesCategory = state.selectedCategory === "all" || product.category === state.selectedCategory;
-      const matchesStatus = state.selectedStatus === "all" || product.contract_status?.toLowerCase() === state.selectedStatus;
+      const matchesCategory =
+        state.selectedCategory === "all" ||
+        product.category === state.selectedCategory;
+      const matchesStatus =
+        state.selectedStatus === "all" ||
+        product.contract_status?.toLowerCase() === state.selectedStatus;
       const matchesSearch =
         product.name.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
-        product.description?.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
+        product.description
+          ?.toLowerCase()
+          .includes(state.searchQuery.toLowerCase()) ||
         false;
       return matchesCategory && matchesStatus && matchesSearch;
     });
-  }, [state.products, state.selectedCategory, state.selectedStatus, state.searchQuery]);
+  }, [
+    state.products,
+    state.selectedCategory,
+    state.selectedStatus,
+    state.searchQuery,
+  ]);
 
   const getStatusCount = (status: string) => {
-    return state.products.filter((p) => 
+    return state.products.filter((p) =>
       status === "all" ? true : p.contract_status?.toLowerCase() === status
     ).length;
   };
 
-  const displayAmountInINR = (ethAmount: number) => {
-    return (ethAmount * ethPriceInINR).toFixed(2);
+  const displayPriceInINR = (priceInEth: number) => {
+    return (priceInEth * ethPriceInINR).toFixed(2); // Convert ETH to INR for display
   };
 
   if (state.loading || walletLoading) {
@@ -560,9 +716,11 @@ function Products() {
         <div className="mt-6">
           <Skeleton height={40} className="mb-4" />
           <div className="product-grid">
-            {Array(4).fill(0).map((_, i) => (
-              <Skeleton key={i} height={200} />
-            ))}
+            {Array(4)
+              .fill(0)
+              .map((_, i) => (
+                <Skeleton key={i} height={200} />
+              ))}
           </div>
         </div>
       </div>
@@ -574,9 +732,18 @@ function Products() {
       <style>{customStyles}</style>
       <div className="p-4 max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">My Sell Listings</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            My Sell Listings
+          </h1>
           <button
-            onClick={() => setState((prev) => ({ ...prev, formData: initialFormData, editingId: null, showForm: true }))}
+            onClick={() =>
+              setState((prev) => ({
+                ...prev,
+                formData: initialFormData,
+                editingId: null,
+                showForm: true,
+              }))
+            }
             className="button-transition flex items-center px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm sm:text-base w-full sm:w-auto justify-center"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -591,7 +758,10 @@ function Products() {
               {state.error}
             </div>
             <button
-              onClick={() => { setState((prev) => ({ ...prev, error: null })); loadProducts(); }}
+              onClick={() => {
+                setState((prev) => ({ ...prev, error: null }));
+                loadProducts();
+              }}
               className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
             >
               Retry
@@ -601,60 +771,108 @@ function Products() {
 
         <DialogBox
           isOpen={state.showForm}
-          onClose={() => setState((prev) => ({ ...prev, showForm: false, formData: initialFormData, editingId: null }))}
+          onClose={() =>
+            setState((prev) => ({
+              ...prev,
+              showForm: false,
+              formData: initialFormData,
+              editingId: null,
+            }))
+          }
           title={state.editingId ? "Edit Sell Listing" : "Add New Sell Listing"}
           contentClassName={""}
-          footer={<>
-            <button
-              type="button"
-              onClick={() => setState((prev) => ({ ...prev, showForm: false, formData: initialFormData, editingId: null }))}
-              className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              form="product-form"
-              className="px-3 py-1 bg-green-500 text-white rounded-md hover:bg-green-700 text-sm flex items-center"
-              disabled={state.uploading || state.loading}
-            >
-              {state.loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {state.editingId ? "Update Contract" : "Create Listing"}
-            </button>
-          </>}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  setState((prev) => ({
+                    ...prev,
+                    showForm: false,
+                    formData: initialFormData,
+                    editingId: null,
+                  }))
+                }
+                className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                form="product-form"
+                className="px-3 py-1 bg-green-500 text-white rounded-md hover:bg-green-700 text-sm flex items-center"
+                disabled={state.uploading || state.loading}
+              >
+                {state.loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : null}
+                {state.editingId ? "Update Contract" : "Create Listing"}
+              </button>
+            </>
+          }
         >
           <form id="product-form" onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-gray-700">Product Name</label>
+              <label
+                htmlFor="name"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Product Name
+              </label>
               <input
                 type="text"
                 id="name"
                 name="name"
                 value={state.formData.name}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, name: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, name: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
                 required
               />
             </div>
             <div>
-              <label htmlFor="description" className="block text-sm font-medium text-gray-700">Description</label>
+              <label
+                htmlFor="description"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Description
+              </label>
               <textarea
                 id="description"
                 name="description"
                 value={state.formData.description}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, description: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, description: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
                 rows={3}
               />
             </div>
             <div>
-              <label htmlFor="price" className="block text-sm font-medium text-gray-700">Price (₹)</label>
+              <label
+                htmlFor="price"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Price (₹)
+              </label>
               <input
                 type="number"
                 id="price"
                 name="price"
                 value={state.formData.price}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, price: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, price: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
                 step="0.01"
                 min="0"
@@ -662,13 +880,23 @@ function Products() {
               />
             </div>
             <div>
-              <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">Quantity</label>
+              <label
+                htmlFor="quantity"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Quantity
+              </label>
               <input
                 type="number"
                 id="quantity"
                 name="quantity"
                 value={state.formData.quantity}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, quantity: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, quantity: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
                 step="0.1"
                 min="0"
@@ -676,12 +904,22 @@ function Products() {
               />
             </div>
             <div>
-              <label htmlFor="unit" className="block text-sm font-medium text-gray-700">Unit</label>
+              <label
+                htmlFor="unit"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Unit
+              </label>
               <select
                 id="unit"
                 name="unit"
                 value={state.formData.unit}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, unit: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, unit: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
               >
                 <option value="kg">kg</option>
@@ -690,12 +928,22 @@ function Products() {
               </select>
             </div>
             <div>
-              <label htmlFor="category" className="block text-sm font-medium text-gray-700">Category</label>
+              <label
+                htmlFor="category"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Category
+              </label>
               <select
                 id="category"
                 name="category"
                 value={state.formData.category}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, category: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, category: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
               >
                 <option value="grains">Grains</option>
@@ -704,7 +952,12 @@ function Products() {
               </select>
             </div>
             <div>
-              <label htmlFor="image" className="block text-sm font-medium text-gray-700">Product Image</label>
+              <label
+                htmlFor="image"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Product Image
+              </label>
               <div className="mt-1 flex items-center space-x-4">
                 {state.formData.image_url && !state.productImgError ? (
                   <img
@@ -732,7 +985,16 @@ function Products() {
                 {state.formData.image_url && (
                   <button
                     type="button"
-                    onClick={() => setState((prev) => ({ ...prev, formData: { ...prev.formData, image: null, image_url: "" } }))}
+                    onClick={() =>
+                      setState((prev) => ({
+                        ...prev,
+                        formData: {
+                          ...prev.formData,
+                          image: null,
+                          image_url: "",
+                        },
+                      }))
+                    }
                     className="text-red-600 hover:text-red-800"
                   >
                     <X className="h-4 w-4" />
@@ -741,13 +1003,23 @@ function Products() {
               </div>
             </div>
             <div>
-              <label htmlFor="location" className="block text-sm font-medium text-gray-700">Location</label>
+              <label
+                htmlFor="location"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Location
+              </label>
               <input
                 type="text"
                 id="location"
                 name="location"
                 value={state.formData.location}
-                onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, location: e.target.value } }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    formData: { ...prev.formData, location: e.target.value },
+                  }))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
                 required
               />
@@ -759,33 +1031,41 @@ function Products() {
           isOpen={state.showDeleteDialog}
           onClose={cancelDelete}
           title="Confirm Deletion"
-          footer={<>
-            <button onClick={cancelDelete} className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm">
-              Cancel
-            </button>
-            <button
-              onClick={confirmDelete}
-              className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm flex items-center"
-              disabled={state.deleting === state.productToDelete?.id}
-            >
-              {state.deleting === state.productToDelete?.id ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </button>
-          </>}
+          footer={
+            <>
+              <button
+                onClick={cancelDelete}
+                className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm flex items-center"
+                disabled={state.deleting === state.productToDelete?.id}
+              >
+                {state.deleting === state.productToDelete?.id ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </button>
+            </>
+          }
           contentClassName={""}
         >
           {state.productToDelete && (
             <div className="flex items-center space-x-3">
               <Trash2 className="h-6 w-6 text-red-600" />
               <p className="text-gray-700">
-                Are you sure you want to delete <span className="font-semibold">{state.productToDelete.name}</span>?
-                This action cannot be undone.
+                Are you sure you want to delete{" "}
+                <span className="font-semibold">
+                  {state.productToDelete.name}
+                </span>
+                ? This action cannot be undone.
               </p>
             </div>
           )}
@@ -806,7 +1086,12 @@ function Products() {
               <Filter className="h-4 w-4 text-gray-400" />
               <select
                 value={state.selectedCategory}
-                onChange={(e) => setState((prev) => ({ ...prev, selectedCategory: e.target.value }))}
+                onChange={(e) =>
+                  setState((prev) => ({
+                    ...prev,
+                    selectedCategory: e.target.value,
+                  }))
+                }
                 className="rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
               >
                 <option value="all">All Categories</option>
@@ -822,19 +1107,24 @@ function Products() {
 
         <div className="mb-6">
           <div className="flex space-x-2 overflow-x-auto pb-2">
-            {["all", "pending", "funded", "in_progress", "completed"].map((status) => (
-              <button
-                key={status}
-                onClick={() => setState((prev) => ({ ...prev, selectedStatus: status }))}
-                className={`px-4 py-2 rounded-md text-sm whitespace-nowrap ${
-                  state.selectedStatus === status
-                    ? "bg-emerald-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                }`}
-              >
-                {status === "all" ? "All" : status.replace("_", " ")} ({getStatusCount(status)})
-              </button>
-            ))}
+            {["all", "pending", "funded", "in_progress", "completed"].map(
+              (status) => (
+                <button
+                  key={status}
+                  onClick={() =>
+                    setState((prev) => ({ ...prev, selectedStatus: status }))
+                  }
+                  className={`px-4 py-2 rounded-md text-sm whitespace-nowrap ${
+                    state.selectedStatus === status
+                      ? "bg-emerald-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {status === "all" ? "All" : status.replace("_", " ")} (
+                  {getStatusCount(status)})
+                </button>
+              )
+            )}
           </div>
         </div>
 
@@ -844,14 +1134,20 @@ function Products() {
               key={product.id}
               product={{
                 ...product,
-                priceDisplay: `₹${displayAmountInINR(product.price)} (${product.price} ETH)`,
-                statusDisplay: `Product: ${product.status} | Contract: ${product.contract_status || "None"}`,
-                totalPrice: product.price * product.quantity,
+                priceDisplay: `${product.price.toFixed(
+                  6
+                )} ETH (₹${displayPriceInINR(product.price)})`, // Display in ETH and INR
+                statusDisplay: `Product: ${product.status} | Contract: ${
+                  product.contract_status || "None"
+                }`,
+                totalPrice: product.price * product.quantity, // Total in ETH
               }}
               onEdit={handleEdit}
               onDelete={() => handleDelete(product)}
               deleting={state.deleting}
-              handleImageError={handleProductImageError} priceDisplay={""}            />
+              handleImageError={handleProductImageError}
+              priceDisplay={""}
+            />
           ))}
         </div>
       </div>

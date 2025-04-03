@@ -19,65 +19,20 @@ import "react-loading-skeleton/dist/skeleton.css";
 import ProductCard from "../ProductCard";
 import DialogBox from "../DialogBox";
 import { toast } from "react-toastify";
-import { useNotification } from '../../../src/context/NotificationContext';
+import { useNotification } from "../../../src/context/NotificationContext";
 
 const customStyles = `
-  .button-transition {
-    transition: all 0.2s ease-in-out;
-  }
-  .product-grid {
-    display: grid;
-    gap: 1rem;
-  }
-  @media (min-width: 640px) {
-    .product-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-  @media (min-width: 1024px) {
-    .product-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-  }
-  @media (min-width: 1280px) {
-    .product-grid {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-  }
-  .dialog-content {
-    max-width: 90vw;
-    max-height: 80vh;
-    overflow-y: auto;
-    padding: 1.5rem;
-  }
-  .dialog-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e5e7eb;
-    margin-top: 1rem;
-  }
-  .error-message {
-    color: #dc2626;
-    font-size: 0.75rem;
-    margin-top: 0.25rem;
-  }
-  .step-indicator {
-    display: flex;
-    justify-content: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-  .step-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background-color: #d1d5db;
-  }
-  .step-dot.active {
-    background-color: #10b981;
-  }
+  .button-transition { transition: all 0.2s ease-in-out; }
+  .product-grid { display: grid; gap: 1rem; }
+  @media (min-width: 640px) { .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1024px) { .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 1280px) { .product-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .dialog-content { max-width: 90vw; max-height: 80vh; overflow-y: auto; padding: 1.5rem; }
+  .dialog-footer { display: flex; justify-content: flex-end; gap: 0.5rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; margin-top: 1rem; }
+  .error-message { color: #dc2626; font-size: 0.75rem; margin-top: 0.25rem; }
+  .step-indicator { display: flex; justify-content: center; gap: 0.5rem; margin-bottom: 1rem; }
+  .step-dot { width: 8px; height: 8px; border-radius: 50%; background-color: #d1d5db; }
+  .step-dot.active { background-color: #10b981; }
 `;
 
 interface Product {
@@ -114,7 +69,7 @@ interface ProductFormData {
   delivery_method: string;
   delivery_location: string;
   additional_notes: string;
-  end_date: string; // Only end_date is user-configurable
+  end_date: string;
 }
 
 interface ProductsState {
@@ -179,7 +134,7 @@ const initialState: ProductsState = {
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 function Products() {
-  const notification = useNotification();
+  const { success, error: notifyError } = useNotification();
   const [state, setState] = useState<ProductsState>(initialState);
   const { address, balance, prices, loading: walletLoading } = useWallet();
   const ethPriceInINR = prices.eth || 200000;
@@ -261,9 +216,7 @@ function Products() {
             table: "products",
             filter: `buyer_id=eq.${buyerData.id}`,
           },
-          () => {
-            loadProducts();
-          }
+          () => loadProducts()
         )
         .subscribe();
 
@@ -356,15 +309,16 @@ function Products() {
     const errors = validateForm();
     if (Object.keys(errors).length > 0) {
       setState((prev) => ({ ...prev, formErrors: errors, error: "Please fix the form errors" }));
+      notifyError("Please fix the form errors");
       return;
     }
-
+  
     setState((prev) => ({ ...prev, submitting: true }));
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError) throw new Error(`Auth error: ${authError.message}`);
       if (!user) throw new Error("No authenticated user");
-
+  
       const { data: buyerData, error: buyerError } = await supabase
         .from("buyers")
         .select("id, user_id")
@@ -372,7 +326,7 @@ function Products() {
         .single();
       if (buyerError) throw new Error(`Buyer fetch error: ${buyerError.message}`);
       if (!buyerData) throw new Error("You must be registered as a buyer");
-
+  
       const { data: walletData, error: walletError } = await supabase
         .from("wallets")
         .select("id")
@@ -380,13 +334,13 @@ function Products() {
         .single();
       if (walletError) throw new Error(`Wallet fetch error: ${walletError.message}`);
       if (!walletData) throw new Error("Wallet not found");
-
+  
       const priceInINR = parseFloat(state.formData.price);
       const quantity = parseFloat(state.formData.quantity);
       const totalPriceINR = priceInINR * quantity;
       const amountEth = (totalPriceINR / ethPriceInINR).toFixed(8);
       if (parseFloat(balance.eth) < parseFloat(amountEth)) throw new Error(`Insufficient ETH balance: ${balance.eth} ETH available, ${amountEth} ETH required`);
-
+  
       const productData = {
         buyer_id: buyerData.id,
         farmer_id: null,
@@ -401,22 +355,49 @@ function Products() {
         status: "active",
         location: state.formData.location,
       };
-
+  
       let productId: string;
       if (state.editingId) {
         const { data: existingProduct, error: fetchError } = await supabase
           .from("products")
-          .select("image_url")
+          .select("image_url, contract_id")
           .eq("id", state.editingId)
           .single();
         if (fetchError) throw new Error(`Fetch existing product error: ${fetchError.message}`);
 
+        if (existingProduct.contract_id) {
+          const { data: contract, error: fetchContractError } = await supabase
+            .from("smart_contracts")
+            .select("status")
+            .eq("contract_id", existingProduct.contract_id)
+            .single();
+          if (fetchContractError) throw new Error(`Fetch contract error: ${fetchContractError.message}`);
+
+          if (contract && contract.status === "PENDING") {
+            await WalletService.cancelContract(walletData.id, Number(existingProduct.contract_id));
+            toast.success(`Old contract #${existingProduct.contract_id} canceled successfully`);
+          } else {
+            throw new Error(`Contract #${existingProduct.contract_id} is in ${contract?.status || "unknown"} state, cannot edit`);
+          }
+        }
+
+        const { txHash, contractId } = await WalletService.createBuyContract(walletData.id, {
+          cropName: state.formData.name,
+          quantity: state.formData.quantity,
+          amount: amountEth,
+          startDate: new Date().toISOString(),
+          endDate: new Date(state.formData.end_date).toISOString(),
+          deliveryMethod: state.formData.delivery_method,
+          deliveryLocation: state.formData.delivery_location,
+          additionalNotes: state.formData.additional_notes || "",
+        });
+
         const { error: updateError } = await supabase
           .from("products")
-          .update(productData)
+          .update({ ...productData, contract_id: contractId })
           .eq("id", state.editingId);
         if (updateError) throw new Error(`Update error: ${updateError.message}`);
-
+  
         if (existingProduct?.image_url && existingProduct.image_url !== state.formData.image_url) {
           const oldFilePath = existingProduct.image_url.split("/product-images/")[1];
           if (oldFilePath) {
@@ -425,6 +406,25 @@ function Products() {
           }
         }
         productId = state.editingId;
+
+        const { data: farmers, error: farmersError } = await supabase
+          .from("farmers")
+          .select("user_id");
+        if (farmersError) throw new Error(`Farmers fetch error: ${farmersError.message}`);
+
+        const farmerIds = farmers.map((farmer: { user_id: string }) => farmer.user_id);
+        const { error: notifyError } = await supabase.rpc("notify_users", {
+          p_users: farmerIds,
+          p_title: "Buy Request Updated",
+          p_message: `${state.formData.name} (Contract #${contractId}) has been updated. Fulfill by ${new Date(state.formData.end_date).toLocaleDateString()}.`,
+          p_type: "order",
+          p_data: { contract_id: contractId, product_id: state.editingId },
+          p_contract_id: Number(contractId),
+        });
+        if (notifyError) throw new Error(`Notification error: ${notifyError.message}`);
+
+        toast.success(`Buy contract updated! New Tx: ${txHash}`);
+        success(`Buy request for ${state.formData.name} updated! Contract #${contractId}`);
       } else {
         const { data, error } = await supabase
           .from("products")
@@ -433,8 +433,8 @@ function Products() {
           .single();
         if (error) throw new Error(`Insert error: ${error.message}`);
         productId = data.id;
-
-        const startDate = new Date().toISOString(); // Start date is contract creation date
+  
+        const startDate = new Date().toISOString();
         const { txHash, contractId } = await WalletService.createBuyContract(walletData.id, {
           cropName: state.formData.name,
           quantity: state.formData.quantity,
@@ -445,34 +445,33 @@ function Products() {
           deliveryLocation: state.formData.delivery_location,
           additionalNotes: state.formData.additional_notes || "",
         });
-
+  
         const { error: updateError } = await supabase
           .from("products")
           .update({ contract_id: contractId })
           .eq("id", productId);
         if (updateError) throw new Error(`Contract ID update error: ${updateError.message}`);
-
+  
         const { data: farmers, error: farmersError } = await supabase
           .from("farmers")
           .select("user_id");
-        if (farmersError) console.error("Error fetching farmers:", farmersError);
-        else {
-          const notifications = farmers.map((farmer: { user_id: string }) => ({
-            user_id: farmer.user_id,
-            contract_id: Number(contractId),
-            title: "New Buy Request",
-            message: `A new buy request for ${state.formData.name} (Contract #${contractId}) is available. Fulfill by ${new Date(state.formData.end_date).toLocaleDateString()}.`,
-            type: "order",
-            data: { contract_id: contractId, product_id: productId },
-            created_at: new Date().toISOString(),
-          }));
-          const { error: notifyError } = await supabase.from("notifications").insert(notifications);
-          if (notifyError) console.error("Error sending notifications:", notifyError);
-        }
-
+        if (farmersError) throw new Error(`Farmers fetch error: ${farmersError.message}`);
+  
+        const farmerIds = farmers.map((farmer: { user_id: string }) => farmer.user_id);
+        const { error: notifyError } = await supabase.rpc("notify_users", {
+          p_users: farmerIds,
+          p_title: "New Buy Request",
+          p_message: `A new buy request for ${state.formData.name} (Contract #${contractId}) is available. Fulfill by ${new Date(state.formData.end_date).toLocaleDateString()}.`,
+          p_type: "order",
+          p_data: { contract_id: contractId, product_id: productId },
+          p_contract_id: Number(contractId),
+        });
+        if (notifyError) throw new Error(`Notification error: ${notifyError.message}`);
+  
         toast.success(`Buy contract #${contractId} created successfully! Tx: ${txHash}`);
+        success(`Buy request for ${state.formData.name} created! Contract #${contractId}`);
       }
-
+  
       await loadProducts();
       setState((prev) => ({
         ...prev,
@@ -483,7 +482,6 @@ function Products() {
         step: 1,
         submitting: false,
       }));
-      notification.success('Buy request created successfully!');
     } catch (err) {
       console.error("Error saving product:", err);
       setState((prev) => ({
@@ -491,7 +489,7 @@ function Products() {
         error: err instanceof Error ? err.message : "Failed to save product",
         submitting: false,
       }));
-      notification.error('Failed to create buy request');
+      notifyError(err instanceof Error ? err.message : "Failed to create buy request");
     }
   };
 
@@ -512,7 +510,7 @@ function Products() {
         delivery_method: "pickup",
         delivery_location: "",
         additional_notes: "",
-        end_date: "", // Not prefilled; could fetch from contract if needed
+        end_date: "",
       },
       editingId: product.id,
       showForm: true,
@@ -526,34 +524,62 @@ function Products() {
     const id = state.productToDelete.id;
     try {
       setState((prev) => ({ ...prev, deleting: id, error: null, showDeleteDialog: false }));
-
+  
       const { data: product, error: fetchError } = await supabase
         .from("products")
         .select("contract_id")
         .eq("id", id)
         .single();
       if (fetchError) throw new Error(`Fetch product error: ${fetchError.message}`);
-
+  
       if (product.contract_id) {
-        const { data: wallet } = await supabase
-          .from("wallets")
-          .select("id")
-          .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+        const { data: contract, error: fetchContractError } = await supabase
+          .from("smart_contracts")
+          .select("status")
+          .eq("contract_id", product.contract_id)
           .single();
-        if (!wallet) throw new Error("Wallet not found");
+        if (fetchContractError) throw new Error(`Fetch contract error: ${fetchContractError.message}`);
 
-        await WalletService.cancelContract(wallet.id, Number(product.contract_id));
+        if (contract && contract.status === "PENDING") {
+          const { data: wallet } = await supabase
+            .from("wallets")
+            .select("id")
+            .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+            .single();
+          if (!wallet) throw new Error("Wallet not found");
+  
+          await WalletService.cancelContract(wallet.id, Number(product.contract_id));
+          toast.success(`Contract #${product.contract_id} canceled successfully`);
+        }
+
+        const { error: deleteNotificationsError } = await supabase
+          .from("notifications")
+          .delete()
+          .eq("contract_id", product.contract_id);
+        if (deleteNotificationsError) throw new Error(`Delete notifications error: ${deleteNotificationsError.message}`);
       }
+  
+      const { error: deleteChatsError } = await supabase
+        .from("chats")
+        .delete()
+        .eq("product_id", id);
+      if (deleteChatsError) throw new Error(`Delete chats error: ${deleteChatsError.message}`);
+
+      const { error: deleteMessagesError } = await supabase
+        .from("messages")
+        .delete()
+        .eq("product_id", id);
+      if (deleteMessagesError) throw new Error(`Delete messages error: ${deleteMessagesError.message}`);
 
       const { error: deleteError } = await supabase
         .from("products")
         .delete()
         .eq("id", id);
       if (deleteError) throw new Error(`Delete error: ${deleteError.message}`);
-
+  
       await loadProducts();
       setState((prev) => ({ ...prev, deleting: null, productToDelete: null }));
-      notification.success("Buy request deleted successfully!");
+      success("Buy request and related notifications deleted successfully!");
     } catch (err) {
       console.error("Error deleting product:", err);
       setState((prev) => ({
@@ -563,7 +589,7 @@ function Products() {
         showDeleteDialog: false,
         productToDelete: null,
       }));
-      notification.error("Failed to delete buy request");
+      notifyError("Failed to delete buy request");
     }
   };
 
@@ -585,7 +611,8 @@ function Products() {
   const filteredProducts = useMemo(() => {
     return state.products.filter((product) => {
       const matchesCategory = state.selectedCategory === "all" || product.category === state.selectedCategory;
-      const matchesStatus = state.selectedStatus === "all" || product.status === state.selectedStatus;
+      const contractStatus = product.smart_contracts?.status || "PENDING"; // Use smart_contracts status
+      const matchesStatus = state.selectedStatus === "all" || contractStatus.toLowerCase() === state.selectedStatus;
       const matchesSearch =
         product.name.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
         (product.description?.toLowerCase().includes(state.searchQuery.toLowerCase()) ?? false);
@@ -594,7 +621,10 @@ function Products() {
   }, [state.products, state.selectedCategory, state.selectedStatus, state.searchQuery]);
 
   const getStatusCount = (status: string) => {
-    return state.products.filter((p) => (status === "all" ? true : p.status === status)).length;
+    return state.products.filter((p) => {
+      const contractStatus = p.smart_contracts?.status || "PENDING"; // Use smart_contracts status
+      return status === "all" ? true : contractStatus.toLowerCase() === status;
+    }).length;
   };
 
   if (state.loading || walletLoading) {
@@ -713,9 +743,7 @@ function Products() {
             {state.step === 1 && (
               <>
                 <div>
-                  <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-                    Name
-                  </label>
+                  <label htmlFor="name" className="block text-sm font-medium text-gray-700">Name</label>
                   <input
                     type="text"
                     id="name"
@@ -728,9 +756,7 @@ function Products() {
                   {state.formErrors.name && <p className="error-message">{state.formErrors.name}</p>}
                 </div>
                 <div>
-                  <label htmlFor="description" className="block text-sm font-medium text-gray-700">
-                    Description
-                  </label>
+                  <label htmlFor="description" className="block text-sm font-medium text-gray-700">Description</label>
                   <textarea
                     id="description"
                     name="description"
@@ -741,9 +767,7 @@ function Products() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="price" className="block text-sm font-medium text-gray-700">
-                    Price (₹ per unit)
-                  </label>
+                  <label htmlFor="price" className="block text-sm font-medium text-gray-700">Price (₹ per unit)</label>
                   <input
                     type="number"
                     id="price"
@@ -757,9 +781,7 @@ function Products() {
                   {state.formErrors.price && <p className="error-message">{state.formErrors.price}</p>}
                 </div>
                 <div>
-                  <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
-                    Quantity
-                  </label>
+                  <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">Quantity</label>
                   <input
                     type="number"
                     id="quantity"
@@ -772,9 +794,7 @@ function Products() {
                   {state.formErrors.quantity && <p className="error-message">{state.formErrors.quantity}</p>}
                 </div>
                 <div>
-                  <label htmlFor="unit" className="block text-sm font-medium text-gray-700">
-                    Unit
-                  </label>
+                  <label htmlFor="unit" className="block text-sm font-medium text-gray-700">Unit</label>
                   <select
                     id="unit"
                     name="unit"
@@ -788,9 +808,7 @@ function Products() {
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="category" className="block text-sm font-medium text-gray-700">
-                    Category
-                  </label>
+                  <label htmlFor="category" className="block text-sm font-medium text-gray-700">Category</label>
                   <select
                     id="category"
                     name="category"
@@ -809,9 +827,7 @@ function Products() {
             {state.step === 2 && (
               <>
                 <div>
-                  <label htmlFor="image" className="block text-sm font-medium text-gray-700">
-                    Product Image
-                  </label>
+                  <label htmlFor="image" className="block text-sm font-medium text-gray-700">Product Image</label>
                   <div className="mt-1 flex items-center space-x-4">
                     {state.formData.image_url && !state.productImgError ? (
                       <img
@@ -848,9 +864,7 @@ function Products() {
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="location" className="block text-sm font-medium text-gray-700">
-                    Location
-                  </label>
+                  <label htmlFor="location" className="block text-sm font-medium text-gray-700">Location</label>
                   <input
                     type="text"
                     id="location"
@@ -863,9 +877,7 @@ function Products() {
                   {state.formErrors.location && <p className="error-message">{state.formErrors.location}</p>}
                 </div>
                 <div>
-                  <label htmlFor="delivery_method" className="block text-sm font-medium text-gray-700">
-                    Delivery Method
-                  </label>
+                  <label htmlFor="delivery_method" className="block text-sm font-medium text-gray-700">Delivery Method</label>
                   <select
                     id="delivery_method"
                     name="delivery_method"
@@ -879,9 +891,7 @@ function Products() {
                   {state.formErrors.delivery_method && <p className="error-message">{state.formErrors.delivery_method}</p>}
                 </div>
                 <div>
-                  <label htmlFor="delivery_location" className="block text-sm font-medium text-gray-700">
-                    Delivery Location
-                  </label>
+                  <label htmlFor="delivery_location" className="block text-sm font-medium text-gray-700">Delivery Location</label>
                   <input
                     type="text"
                     id="delivery_location"
@@ -895,9 +905,7 @@ function Products() {
                   {state.formErrors.delivery_location && <p className="error-message">{state.formErrors.delivery_location}</p>}
                 </div>
                 <div>
-                  <label htmlFor="end_date" className="block text-sm font-medium text-gray-700">
-                    Fulfillment Deadline (End Date)
-                  </label>
+                  <label htmlFor="end_date" className="block text-sm font-medium text-gray-700">Fulfillment Deadline (End Date)</label>
                   <input
                     type="date"
                     id="end_date"
@@ -905,16 +913,14 @@ function Products() {
                     value={state.formData.end_date}
                     onChange={(e) => setState((prev) => ({ ...prev, formData: { ...prev.formData, end_date: e.target.value } }))}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm"
-                    min={new Date().toISOString().split("T")[0]} // Prevent past dates
+                    min={new Date().toISOString().split("T")[0]}
                     required
                   />
                   {state.formErrors.end_date && <p className="error-message">{state.formErrors.end_date}</p>}
                   <p className="text-xs text-gray-500 mt-1">Start date will be set to today ({new Date().toLocaleDateString()}).</p>
                 </div>
                 <div>
-                  <label htmlFor="additional_notes" className="block text-sm font-medium text-gray-700">
-                    Additional Notes
-                  </label>
+                  <label htmlFor="additional_notes" className="block text-sm font-medium text-gray-700">Additional Notes</label>
                   <textarea
                     id="additional_notes"
                     name="additional_notes"
@@ -1003,7 +1009,7 @@ function Products() {
 
         <div className="mb-6">
           <div className="flex space-x-2 overflow-x-auto pb-2">
-            {["all", "active", "funded", "in_progress", "completed"].map((status) => (
+            {["all", "pending", "funded", "in_progress", "completed"].map((status) => (
               <button
                 key={status}
                 onClick={() => setState((prev) => ({ ...prev, selectedStatus: status }))}
@@ -1023,7 +1029,11 @@ function Products() {
           {filteredProducts.map((product) => (
             <ProductCard
               key={product.id}
-              product={{ ...product, totalPrice: product.price * product.quantity }}
+              product={{
+                ...product,
+                totalPrice: product.price * product.quantity,
+                statusDisplay: `Product: ${product.status} | Contract: ${product.smart_contracts?.status || "None"}`, // Display smart_contracts status
+              }}
               onEdit={handleEdit}
               onDelete={() => handleDelete(product)}
               deleting={state.deleting}

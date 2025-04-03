@@ -15,10 +15,10 @@ import {
 } from "./routes";
 import ProtectedRoute from "./components/ProtectedRoute";
 import LoadingSpinner from "./components/shared/LoadingSpinner";
-import AdminProtectedRoute from "../client/admin/components/AdminProtectedRoute";
-import { ToastContainer } from "react-toastify";
+import AdminProtectedRoute from "../client/admin/components/AdminProtectedRoute"; // Original path kept
+import { ToastContainer } from "react-toastify"; // Kept as per your original
 import "react-toastify/dist/ReactToastify.css";
-import { NotificationProvider } from "./context/NotificationContext";
+import { NotificationProvider } from "./context/NotificationContext"; // Added notification provider
 
 // Lazy-loaded components
 const AuthHome = lazy(() => import("../client/pages/Home"));
@@ -85,7 +85,7 @@ const MainLayout = memo(({ isAuthenticated, userType }: MainLayoutProps) => {
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <NotificationProvider>
+      <NotificationProvider> {/* Added NotificationProvider */}
         <Router>
           <AppContent />
         </Router>

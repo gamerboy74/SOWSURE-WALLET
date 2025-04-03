@@ -23,7 +23,8 @@ const Navbar: React.FC<NavbarProps> = React.memo(
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [notifications] = useState(0); // Placeholder for future implementation
+    const [unreadNotifications, setUnreadNotifications] = useState(0);
+    const [siteName, setSiteName] = useState("FarmConnect"); // Default site name
 
     const setupUserData = useCallback(async () => {
       if (!isAuthenticated || !user) {
@@ -57,21 +58,85 @@ const Navbar: React.FC<NavbarProps> = React.memo(
       }
     }, [isAuthenticated, user]);
 
-    useEffect(() => {
-      if (isAuthenticated && !authLoading) setupUserData();
-    }, [isAuthenticated, authLoading, setupUserData]);
+    // Fetch site name from site_settings table
+    const fetchSiteName = useCallback(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("site_settings")
+          .select("site_name")
+          .single();
+        if (error) throw error;
+        if (data && data.site_name) {
+          setSiteName(data.site_name);
+        }
+      } catch (err) {
+        console.error("Failed to fetch site name:", err);
+      }
+    }, []);
 
+    // Fetch unread notifications count from notification_counts
+    const fetchUnreadNotifications = useCallback(async () => {
+      if (!user) return;
+      try {
+        const { data, error } = await supabase
+          .from("notification_counts")
+          .select("unread_count")
+          .eq("user_id", user.id)
+          .single();
+        if (error && error.code !== "PGRST116") throw error; // Ignore "no rows" error
+        setUnreadNotifications(data?.unread_count || 0);
+      } catch (err) {
+        console.error("Failed to fetch unread notifications count:", err);
+      }
+    }, [user]);
+
+    useEffect(() => {
+      if (isAuthenticated && !authLoading) {
+        setupUserData();
+        fetchSiteName();
+        fetchUnreadNotifications();
+      }
+    }, [isAuthenticated, authLoading, setupUserData, fetchSiteName, fetchUnreadNotifications]);
+
+    // Real-time subscription for notification counts
+    useEffect(() => {
+      if (!user) return;
+
+      const channel = supabase
+        .channel("notification_counts_changes")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "notification_counts",
+            filter: `user_id=eq.${user.id}`,
+          },
+          () => {
+            fetchUnreadNotifications();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        channel.unsubscribe();
+      };
+    }, [user, fetchUnreadNotifications]);
+
+    // Auth state change listener
     useEffect(() => {
       const {
         data: { subscription },
       } = supabase.auth.onAuthStateChange((event) => {
         if (event === "SIGNED_OUT") {
           notification.info("You have been signed out");
+          setUnreadNotifications(0); // Reset notifications on sign out
+          setSiteName("FarmConnect"); // Reset site name on sign out
         }
       });
 
       return () => subscription.unsubscribe();
-    }, []);
+    }, [notification]);
 
     if (
       !isAuthenticated ||
@@ -100,12 +165,16 @@ const Navbar: React.FC<NavbarProps> = React.memo(
       }
     };
 
+    // Handle notification bell click
+    const handleNotificationsClick = () => {
+      navigate("/notifications");
+    };
+
     return (
       <nav
         className="sticky top-0 z-50 w-full bg-white/90 backdrop-blur-md shadow-md"
         aria-label="Main navigation"
       >
-        {/* Removed max-w-7xl and mx-auto, kept padding for content */}
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-6">
@@ -116,7 +185,7 @@ const Navbar: React.FC<NavbarProps> = React.memo(
               >
                 <Sprout className="h-8 w-8 text-emerald-600" />
                 <span className="ml-2 text-xl font-bold text-gray-900">
-                  FarmConnect
+                  {siteName}
                 </span>
               </Link>
               {!isLoading && (
@@ -147,13 +216,14 @@ const Navbar: React.FC<NavbarProps> = React.memo(
                 </div>
               )}
               <button
+                onClick={handleNotificationsClick}
                 className="relative text-gray-600 hover:text-emerald-600 p-2 rounded-full hover:bg-gray-100"
-                aria-label="Notifications"
+                aria-label="View Notifications"
               >
                 <Bell className="h-5 w-5" />
-                {notifications > 0 && (
+                {unreadNotifications > 0 && (
                   <span className="absolute top-1 right-1 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
-                    {notifications}
+                    {unreadNotifications}
                   </span>
                 )}
               </button>
