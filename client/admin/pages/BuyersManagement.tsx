@@ -31,8 +31,8 @@ interface Buyer {
   terms_accepted: boolean;
   created_at: string;
   updated_at: string;
-  orders: number; // Derived from products table (type='buy')
-  joined: string; // Formatted created_at
+  orders: number;
+  joined: string;
 }
 
 interface DialogBoxProps {
@@ -46,6 +46,28 @@ interface DialogBoxProps {
 
 const PLACEHOLDER_IMAGE = "/placeholder-image.jpg";
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const CACHE_KEY = "buyersData";
+const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
+
+// Skeleton Loader Component
+const SkeletonBuyerCard: React.FC = () => (
+  <div className="bg-white rounded-xl shadow-sm border border-gray-100 animate-pulse">
+    <div className="h-48 bg-gray-200 rounded-t-xl" />
+    <div className="p-5 space-y-3">
+      <div className="h-4 bg-gray-200 rounded w-3/4" />
+      <div className="h-3 bg-gray-200 rounded w-full" />
+      <div className="space-y-2">
+        <div className="h-3 bg-gray-200 rounded w-1/2" />
+        <div className="h-3 bg-gray-200 rounded w-2/3" />
+        <div className="h-3 bg-gray-200 rounded w-1/3" />
+      </div>
+      <div className="flex gap-3">
+        <div className="h-10 bg-gray-200 rounded-lg w-1/2" />
+        <div className="h-10 bg-gray-200 rounded-lg w-1/2" />
+      </div>
+    </div>
+  </div>
+);
 
 const DialogBox: React.FC<DialogBoxProps> = React.memo(
   ({ isOpen, onClose, title, children, footer, loading = false }) => {
@@ -93,6 +115,22 @@ const BuyersManagement: React.FC = () => {
   const [showDeleteDialog, setShowDeleteDialog] = useState<Buyer | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
+  // Cache utility functions
+  const getCachedData = useCallback(() => {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (!cached) return null;
+    const { data, timestamp } = JSON.parse(cached);
+    if (Date.now() - timestamp > CACHE_EXPIRY) {
+      localStorage.removeItem(CACHE_KEY);
+      return null;
+    }
+    return data as Buyer[];
+  }, []);
+
+  const setCachedData = useCallback((data: Buyer[]) => {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+  }, []);
+
   const checkAdminStatus = useCallback(async (): Promise<boolean> => {
     try {
       const {
@@ -121,6 +159,13 @@ const BuyersManagement: React.FC = () => {
   const fetchBuyers = useCallback(async () => {
     try {
       setLoading(true);
+      const cachedData = getCachedData();
+      if (cachedData) {
+        setBuyers(cachedData);
+        setLoading(false);
+        return;
+      }
+
       const isAdminUser = await checkAdminStatus();
       if (!isAdminUser) throw new Error("Admin privileges required");
 
@@ -174,12 +219,13 @@ const BuyersManagement: React.FC = () => {
       }));
 
       setBuyers(formattedBuyers);
+      setCachedData(formattedBuyers);
     } catch (err) {
       toast.error((err as Error).message || "Failed to load buyers");
     } finally {
       setLoading(false);
     }
-  }, [checkAdminStatus]);
+  }, [checkAdminStatus, getCachedData, setCachedData]);
 
   const uploadFile = useCallback(
     async (file: File, userId: string, bucket: string): Promise<string> => {
@@ -234,7 +280,7 @@ const BuyersManagement: React.FC = () => {
                   b.id === newBuyer.id
                     ? {
                         ...newBuyer,
-                        orders: b.orders, // Preserve derived field
+                        orders: b.orders,
                         joined: new Date(newBuyer.created_at).toLocaleDateString(),
                       }
                     : b
@@ -249,6 +295,7 @@ const BuyersManagement: React.FC = () => {
             default:
               break;
           }
+          setCachedData(buyers); // Update cache after real-time changes
         }
       )
       .subscribe();
@@ -256,7 +303,7 @@ const BuyersManagement: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchBuyers]);
+  }, [fetchBuyers, setCachedData]);
 
   const handleExport = useCallback(() => {
     const csvContent = [
@@ -330,7 +377,7 @@ const BuyersManagement: React.FC = () => {
             storage_capacity: parseFloat(row[headers.indexOf("Storage Capacity")] || "0"),
             business_address: row[headers.indexOf("Business Address")] || "",
             pincode: row[headers.indexOf("Pincode")] || "",
-            terms_accepted: false, // Default value as per schema
+            terms_accepted: false,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }));
@@ -412,13 +459,14 @@ const BuyersManagement: React.FC = () => {
         setEditingBuyer(null);
         setNewProfileImage(null);
         setImagePreview(null);
+        setCachedData(buyers); // Update cache after edit
       } catch (err) {
         toast.error((err as Error).message || "Failed to update buyer");
       } finally {
         setLoading(false);
       }
     },
-    [editingBuyer, isAdmin, newProfileImage, uploadFile]
+    [editingBuyer, isAdmin, newProfileImage, uploadFile, buyers, setCachedData]
   );
 
   const confirmDelete = useCallback(async () => {
@@ -468,12 +516,13 @@ const BuyersManagement: React.FC = () => {
         `Deleted ${showDeleteDialog.company_name} and all associated data`
       );
       setShowDeleteDialog(null);
+      setCachedData(buyers); // Update cache after delete
     } catch (err) {
       toast.error((err as Error).message || "Failed to delete buyer");
     } finally {
       setLoading(false);
     }
-  }, [showDeleteDialog, isAdmin]);
+  }, [showDeleteDialog, isAdmin, buyers, setCachedData]);
 
   const filteredBuyers = useMemo(
     () =>
@@ -497,8 +546,24 @@ const BuyersManagement: React.FC = () => {
 
   if (loading && !buyers.length) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-200">
-        <Loader2 className="h-12 w-12 animate-spin text-emerald-600" />
+      <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100 p-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex justify-between items-center mb-10">
+            <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight drop-shadow-md">
+              Buyers Management
+            </h1>
+            <div className="flex gap-4 animate-pulse">
+              <div className="h-12 w-64 bg-gray-200 rounded-xl" />
+              <div className="h-12 w-32 bg-gray-200 rounded-xl" />
+              <div className="h-12 w-32 bg-gray-200 rounded-xl" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {Array(6).fill(0).map((_, i) => (
+              <SkeletonBuyerCard key={i} />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

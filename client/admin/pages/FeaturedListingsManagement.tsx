@@ -32,7 +32,6 @@ const SkeletonProductCard: React.FC = () => (
     <div className="h-4 bg-gray-300 rounded w-1/2 mb-4" />
     <div className="flex gap-2">
       <div className="h-10 w-20 bg-gray-300 rounded" />
-      <div className="h-10 w-20 bg-gray-300 rounded" />
     </div>
   </div>
 );
@@ -40,7 +39,6 @@ const SkeletonProductCard: React.FC = () => (
 const FeaturedListingsManagement: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
 
   // Cache utility functions
   const getCachedData = useCallback(() => {
@@ -95,27 +93,14 @@ const FeaturedListingsManagement: React.FC = () => {
         setProducts((prev) =>
           prev.map((p) => (p.id === product.id ? { ...p, featured: !p.featured } : p))
         );
+        setCachedData(
+          products.map((p) => (p.id === product.id ? { ...p, featured: !p.featured } : p))
+        ); // Update cache
       } catch (error) {
         console.error("Error updating featured status:", error);
       }
     },
-    []
-  );
-
-  const handleDelete = useCallback(
-    async (productId: string) => {
-      setDeleting(productId);
-      try {
-        const { error } = await supabase.from("products").delete().eq("id", productId);
-        if (error) throw error;
-        setProducts((prev) => prev.filter((p) => p.id !== productId));
-      } catch (error) {
-        console.error("Error deleting product:", error);
-      } finally {
-        setDeleting(null);
-      }
-    },
-    []
+    [products, setCachedData]
   );
 
   const handleImageError = useCallback(() => {
@@ -124,7 +109,7 @@ const FeaturedListingsManagement: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="max-w h-screen bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100 mx-auto px-4 sm:px-6 lg:px-8 py-16">
+      <div className="max-w-7xl h-screen bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100 mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-3xl font-bold text-gray-900 mb-10">Manage Featured Listings</h1>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {Array(6).fill(0).map((_, i) => (
@@ -136,19 +121,18 @@ const FeaturedListingsManagement: React.FC = () => {
   }
 
   return (
-    <div className="max-w h-screen bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100 mx-auto px-4 sm:px-6 lg:px-8 py-16">
+    <div className="max-w-7xl h-screen bg-gradient-to-br from-indigo-100 via-purple-100 to-pink-100 mx-auto px-4 sm:px-6 lg:px-8 py-16">
       <h1 className="text-3xl font-bold text-gray-900 mb-10">Manage Featured Listings</h1>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {products.map((product) => (
           <ProductCard
             key={product.id}
-            product={product}
+            product={{ ...product, totalPrice: product.price * product.quantity }}
             onEdit={handleEdit}
-            onDelete={() => handleDelete(product.id)}
-            deleting={deleting}
+            onDelete={() => { } } // Empty function instead of undefined
+            deleting={null} // No deleting state to pass
             handleImageError={handleImageError}
-            isAdmin={true}
-          />
+            isAdmin={true} priceDisplay={""}          />
         ))}
       </div>
     </div>

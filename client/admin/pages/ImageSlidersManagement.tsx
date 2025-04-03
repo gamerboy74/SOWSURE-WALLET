@@ -1,4 +1,3 @@
-// src/components/ImageSliderEditor.tsx
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { supabaseAdmin } from "../../lib/supabase";
 import { Upload, Trash2, Edit, Save, Plus, X } from "lucide-react";
@@ -15,6 +14,25 @@ interface SlideData {
   cta_secondary_link: string;
 }
 
+const CACHE_KEY = "sliderImages";
+const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
+
+// Skeleton Loader Component
+const SkeletonSlideCard: React.FC = () => (
+  <div className="bg-white rounded-xl shadow-md overflow-hidden animate-pulse">
+    <div className="w-full h-48 bg-gray-200" />
+    <div className="p-4 space-y-3">
+      <div className="h-5 bg-gray-200 rounded w-3/4" />
+      <div className="h-4 bg-gray-200 rounded w-1/2" />
+      <div className="h-3 bg-gray-200 rounded w-full" />
+      <div className="flex justify-between">
+        <div className="h-8 w-8 bg-gray-200 rounded-full" />
+        <div className="h-8 w-8 bg-gray-200 rounded-full" />
+      </div>
+    </div>
+  </div>
+);
+
 const ImageSlidersManagement: React.FC = React.memo(() => {
   const [slides, setSlides] = useState<SlideData[]>([]);
   const [newSlide, setNewSlide] = useState<Partial<SlideData>>({});
@@ -25,35 +43,57 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // Fetch slides with useCallback for memoization
+  // Cache utility functions
+  const getCachedData = useCallback(() => {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (!cached) return null;
+    const { data, timestamp } = JSON.parse(cached);
+    if (Date.now() - timestamp > CACHE_EXPIRY) {
+      localStorage.removeItem(CACHE_KEY);
+      return null;
+    }
+    return data as SlideData[];
+  }, []);
+
+  const setCachedData = useCallback((data: SlideData[]) => {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+  }, []);
+
   const fetchSlides = useCallback(async () => {
     setLoading(true);
     try {
+      const cachedData = getCachedData();
+      if (cachedData) {
+        setSlides(cachedData);
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabaseAdmin
         .from("slides")
         .select("*")
         .order("created_at", { ascending: true });
       if (error) throw error;
       setSlides(data || []);
+      setCachedData(data || []);
     } catch (err) {
       console.error("Error fetching slides:", err);
       setError("Failed to load slides. Please refresh the page.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getCachedData, setCachedData]);
 
   useEffect(() => {
     fetchSlides();
   }, [fetchSlides]);
 
-  // Memoized image upload function
   const handleImageUpload = useCallback(async (file: File) => {
     const fileName = `${Date.now()}-${file.name}`;
     const { error } = await supabaseAdmin.storage
       .from("slider-images")
       .upload(fileName, file, { upsert: true, cacheControl: "3600" });
-    
+
     if (error) {
       console.error("Upload error:", error);
       setError("Failed to upload image. Please try again.");
@@ -62,7 +102,6 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
     return supabaseAdmin.storage.from("slider-images").getPublicUrl(fileName).data.publicUrl;
   }, []);
 
-  // Form validation
   const validateForm = useCallback((slide: Partial<SlideData>, isEdit: boolean) => {
     const errors: Record<string, string> = {};
     if (!slide.title) errors.title = "Title is required";
@@ -98,6 +137,7 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
 
       if (error) throw error;
       setSlides((prev) => [...prev, data]);
+      setCachedData([...slides, data]); // Update cache
       setNewSlide({});
       setImageFile(null);
       setIsFormOpen(false);
@@ -107,7 +147,7 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
     } finally {
       setLoading(false);
     }
-  }, [newSlide, imageFile, handleImageUpload]);
+  }, [newSlide, imageFile, handleImageUpload, slides, setCachedData]);
 
   const handleEdit = useCallback((slide: SlideData) => {
     setEditingSlide(slide);
@@ -147,6 +187,7 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
 
       if (error) throw error;
       setSlides((prev) => prev.map((s) => (s.id === data.id ? data : s)));
+      setCachedData(slides.map((s) => (s.id === data.id ? data : s))); // Update cache
       setEditingSlide(null);
       setNewSlide({});
       setImageFile(null);
@@ -157,7 +198,7 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
     } finally {
       setLoading(false);
     }
-  }, [newSlide, imageFile, editingSlide, handleImageUpload]);
+  }, [newSlide, imageFile, editingSlide, handleImageUpload, slides, setCachedData]);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this slide?")) return;
@@ -168,15 +209,15 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
       const { error } = await supabaseAdmin.from("slides").delete().eq("id", id);
       if (error) throw error;
       setSlides((prev) => prev.filter((slide) => slide.id !== id));
+      setCachedData(slides.filter((slide) => slide.id !== id)); // Update cache
     } catch (err) {
       console.error("Error deleting slide:", err);
       setError("Failed to delete slide. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [slides, setCachedData]);
 
-  // Memoized slides list to prevent unnecessary re-renders
   const slidesList = useMemo(() => (
     slides.map((slide, index) => (
       <div
@@ -218,6 +259,27 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
     ))
   ), [slides, loading, handleEdit, handleDelete]);
 
+  if (loading && !slides.length) {
+    return (
+      <div className="p-6 max-w-7xl mx-auto min-h-screen bg-gray-100">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 animate-fade-in">Slider Management</h1>
+          <button
+            className="px-4 py-2 bg-gray-400 text-white rounded-lg shadow-md flex items-center gap-2 cursor-not-allowed animate-pulse"
+            disabled
+          >
+            <Plus size={20} /> Add Slide
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {Array(3).fill(0).map((_, i) => (
+            <SkeletonSlideCard key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-7xl mx-auto min-h-screen bg-gray-100">
       <div className="flex justify-between items-center mb-8">
@@ -237,7 +299,6 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
         </button>
       </div>
 
-      {/* Modal Form */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 animate-fade-in">
           <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto transform scale-95 animate-slide-up relative">
@@ -391,10 +452,7 @@ const ImageSlidersManagement: React.FC = React.memo(() => {
         </div>
       )}
 
-      {/* Slides List */}
-      {loading && !slides.length ? (
-        <div className="text-center text-gray-600 animate-pulse py-10">Loading slides...</div>
-      ) : slides.length === 0 ? (
+      {slides.length === 0 ? (
         <div className="text-center text-gray-600 py-10">No slides available. Add one to get started!</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
